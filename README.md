@@ -120,33 +120,6 @@ VITE_API_URL=
 
 ---
 
-## 🌐 Deploy
-
-**Backend → Vercel**
-1. Push folder `server/` ke GitHub
-2. Import project di [vercel.com](https://vercel.com)
-3. Set environment variables di Vercel dashboard
-4. Cron jobs otomatis aktif sesuai `vercel.json`
-
-**Frontend → Vercel**
-1. Push folder `client/` ke GitHub
-2. Import project di Vercel, set framework ke **Vite**
-3. Set `VITE_API_URL` ke URL backend yang sudah di-deploy
-
----
-
-## 📬 Cron Jobs (Vercel)
-
-| Endpoint | Jadwal (UTC) | WIB |
-|---|---|---|
-| `/api/cron/recurring` | `5 17 * * *` | 00:05 |
-| `/api/cron/rollover` | `10 17 1 * *` | 00:10 tgl 1 |
-| `/api/cron/budget-alert` | `0 2 * * *` | 09:00 |
-| `/api/cron/goal-alert` | `5 2 * * *` | 09:05 |
-| `/api/cron/daily-reminder` | `0 13 * * *` | 20:00 |
-
----
-
 ## 👩‍💻 Author
 
 **Rachel** — [@imyourchel](https://github.com/imyourchel)
