@@ -1,865 +1,841 @@
-import { useState, useEffect, useCallback } from "react";
-import { useFinance } from "../context/FinanceContext";
+import { useEffect, useMemo, useState } from "react";
 import {
-    getGoalsAPI,
-    createGoalAPI,
-    addSavingAPI,
-    deleteGoalAPI,
-} from "../services/api";
-import { formatRupiah, formatDateShort } from "../utils/format";
-import { formatNumberInput, parseNumberInput } from "../utils/format";
-import Card from "../components/ui/Card";
-import ProgressBar from "../components/ui/ProgressBar";
+    FiArrowDownLeft,
+    FiArrowUpRight,
+    FiCalendar,
+    FiCheck,
+    FiClock,
+    FiEdit2,
+    FiFlag,
+    FiPause,
+    FiPlay,
+    FiPlus,
+    FiTarget,
+    FiTrash2,
+    FiTrendingUp,
+    FiX,
+} from "react-icons/fi";
+import { confirmDialog } from "../utils/confirm";
+import { useFinance } from "../context/FinanceContext";
+import { getGoalsAPI, createGoalAPI, updateGoalAPI, addSavingAPI, deleteGoalAPI } from "../services/api";
+import { formatRupiah, formatNumberInput, parseNumberInput, MONTHS } from "../utils/format";
 import PageHeader from "../components/Layout/PageHeader";
-import Modal from "../components/ui/Modal";
+import FormScreen from "../components/ui/FormScreen";
 import DropdownMenu from "../components/ui/DropdownMenu";
+import DatePicker from "../components/ui/DatePicker";
+import ColorSwatches from "../components/ui/ColorSwatches";
+import Meter from "../components/planning/Meter";
+import "../styles/planning.css";
 
-const PRIORITY_CFG = {
-    high: { label: "🔴 Tinggi", color: "#ef4444" },
-    medium: { label: "🟡 Sedang", color: "#f59e0b" },
-    low: { label: "🟢 Rendah", color: "#10b981" },
+const PRIORITY = {
+    high: { label: "Prioritas tinggi", tone: "danger" },
+    medium: { label: "Prioritas sedang", tone: "warn" },
+    low: { label: "Prioritas rendah", tone: "muted" },
+};
+
+const STATUS = {
+    completed: { label: "Tercapai", tone: "ok" },
+    "on-track": { label: "Sesuai jadwal", tone: "ok" },
+    behind: { label: "Tertinggal", tone: "warn" },
+    overdue: { label: "Lewat target", tone: "danger" },
+    "not-started": { label: "Belum mulai", tone: "muted" },
+    steady: { label: "Rutin menabung", tone: "ok" },
+    stalled: { label: "Belum ada setoran baru", tone: "warn" },
+    paused: { label: "Dijeda", tone: "muted" },
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const fmtDate = (d, withYear = true) =>
+    d
+        ? new Date(d).toLocaleDateString("id-ID", {
+              day: "numeric",
+              month: "short",
+              ...(withYear ? { year: "numeric" } : {}),
+          })
+        : "-";
+const fmtMonthYear = (d) => (d ? new Date(d).toLocaleDateString("id-ID", { month: "long", year: "numeric" }) : "-");
+const short = (n) => {
+    const v = Math.abs(n);
+    if (v >= 1e9) return `${(n / 1e9).toLocaleString("id-ID", { maximumFractionDigits: 1 })} M`;
+    if (v >= 1e6) return `${(n / 1e6).toLocaleString("id-ID", { maximumFractionDigits: 1 })} jt`;
+    if (v >= 1e3) return `${Math.round(n / 1e3)} rb`;
+    return String(n);
+};
+
+const emptyForm = {
+    name: "",
+    targetAmount: "",
+    deadline: "",
+    priority: "medium",
+    color: "#1e6e55",
+    note: "",
+    walletId: "",
 };
 
 export default function Goals() {
-    const [goals, setGoals] = useState([]);
-    const [showModal, setShowModal] = useState(false);
-    // const { wallets } = useFinance();
     const { wallets, refresh } = useFinance();
-
-    const [form, setForm] = useState({
-        name: "",
-        targetAmount: "",
-        deadline: "",
-        priority: "medium",
-        color: "#10b981",
-        note: "",
-        walletId: "",
-    });
+    const [goals, setGoals] = useState([]);
+    const [loaded, setLoaded] = useState(false);
+    const [editor, setEditor] = useState(null); // null | { mode: "new" } | { mode: "edit", goal }
+    const [tab, setTab] = useState("active");
+    const [reload, setReload] = useState(0);
 
     useEffect(() => {
-        window.scrollTo(0, 0);
-    }, []);
-
-    const fetch = useCallback(async () => {
-        const res = await getGoalsAPI();
-        setGoals(res.data);
-    }, []);
-
-    useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        fetch();
-    }, [fetch]);
-
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        window.scrollTo(0, 0);
-        await createGoalAPI({
-            ...form,
-            targetAmount: parseNumberInput(form.targetAmount),
-        });
-        setForm({
-            name: "",
-            targetAmount: "",
-            deadline: "",
-            priority: "medium",
-            color: "#10b981",
-            note: "",
-            walletId: "",
-        });
-        setShowModal(false);
-        await fetch();
+        let alive = true;
+        getGoalsAPI()
+            .then((res) => {
+                if (!alive) return;
+                setGoals(res.data || []);
+                setLoaded(true);
+            })
+            .catch(() => alive && setLoaded(true));
+        return () => {
+            alive = false;
+        };
+    }, [reload]);
+    const reloadAll = async () => {
+        setReload((n) => n + 1);
         await refresh();
     };
 
-    const [deleteModal, setDeleteModal] = useState({ show: false, id: null, walletId: "" });
-    const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
-    const [deleteConfirmError, setDeleteConfirmError] = useState("");
+    const groups = useMemo(
+        () => ({
+            active: goals.filter((g) => g.status === "active"),
+            paused: goals.filter((g) => g.status === "paused"),
+            completed: goals.filter((g) => g.status === "completed"),
+        }),
+        [goals],
+    );
 
-    const handleDelete = async (id) => {
-        const g = goals.find((x) => x._id === id);
-        if (!g) return;
-        // if there's remaining funds require choosing wallet
-        if (g.currentAmount > 0) {
-            setDeleteModal({ show: true, id });
-            return;
-        }
-        if (!confirm("Hapus goal ini?")) return;
-        await deleteGoalAPI(id);
-        setGoals((prev) => prev.filter((g2) => g2._id !== id));
-        await refresh();
-    };
+    const overview = useMemo(() => {
+        const live = groups.active;
+        const saved = live.reduce((a, g) => a + (g.currentAmount || 0), 0);
+        const target = live.reduce((a, g) => a + (g.targetAmount || 0), 0);
+        const needed = live.reduce((a, g) => a + (g.neededPerMonth || 0), 0);
+        const pace = live.reduce((a, g) => a + (g.pacePerMonth || 0), 0);
+        const onTrack = live.filter((g) => ["on-track", "steady"].includes(g.health)).length;
+        const behind = live.filter((g) => ["behind", "overdue", "stalled"].includes(g.health)).length;
+        return { saved, target, needed, pace, onTrack, behind };
+    }, [groups]);
 
-    const confirmDelete = async (walletId) => {
-        const id = deleteModal.id;
-        if (!id) return;
-        await deleteGoalAPI(id, { walletId });
-        setGoals((prev) => prev.filter((g) => g._id !== id));
-        setDeleteModal({ show: false, id: null });
+    if (editor) {
+        return (
+            <GoalEditor
+                initial={editor.goal}
+                wallets={wallets}
+                onClose={() => setEditor(null)}
+                onSaved={async () => {
+                    setEditor(null);
+                    await reloadAll();
+                }}
+            />
+        );
+    }
 
-        await fetch();
-        await refresh();
-    };
-
-    const handleAddSaving = async (
-        id,
-        amount,
-        walletId,
-        action = "deposit",
-    ) => {
-        window.scrollTo(0, 0);
-        const parsedAmount = parseNumberInput(amount);
-        if (!amount || parsedAmount <= 0) return;
-        if (!walletId) {
-            alert("Pilih wallet terlebih dahulu");
-            return;
-        }
-
-        await addSavingAPI(id, { amount: parsedAmount, walletId, action });
-
-        await fetch();
-        await refresh();
-    };
-
-    const activeGoals = goals.filter((g) => g.status === "active");
-    const completedGoals = goals.filter((g) => g.status === "completed");
+    const tabs = [
+        { id: "active", label: "Berjalan", count: groups.active.length },
+        { id: "paused", label: "Dijeda", count: groups.paused.length },
+        { id: "completed", label: "Tercapai", count: groups.completed.length },
+    ].filter((t) => t.id === "active" || t.count > 0);
+    const list = groups[tab] || [];
+    const overallPct = overview.target > 0 ? Math.round((overview.saved / overview.target) * 100) : 0;
 
     return (
-        <div style={{ padding: "32px", maxWidth: "900px", margin: "0 auto" }}>
+        <div className="pl-page">
             <PageHeader
                 title="Goals & Tabungan"
-                subtitle={`${activeGoals.length} aktif · ${completedGoals.length} tercapai`}
+                subtitle={`${groups.active.length} berjalan · ${groups.completed.length} tercapai`}
                 action={
-                    <button
-                        onClick={() => setShowModal(true)}
-                        style={btnPrimary}
-                    >
-                        + Buat Goal
+                    <button type="button" className="btn-primary" onClick={() => setEditor({ mode: "new" })}>
+                        <FiPlus aria-hidden /> Goal baru
                     </button>
                 }
             />
 
-            {/* Form buat goal baru (modal) */}
-            {showModal && (
-                <Modal title="Goal Baru" onClose={() => setShowModal(false)}>
-                    <form
-                        onSubmit={async (e) => {
-                            await handleSubmit(e);
-                            setShowModal(false);
-                        }}
-                    >
-                        <div
-                            style={{
-                                display: "grid",
-                                gridTemplateColumns: "1fr 1fr",
-                                gap: "12px",
-                                marginBottom: "12px",
-                            }}
-                        >
-                            <div>
-                                <label style={lbl}>Nama Goal</label>
-                                <input
-                                    value={form.name}
-                                    onChange={(e) =>
-                                        setForm({
-                                            ...form,
-                                            name: e.target.value,
-                                        })
-                                    }
-                                    style={inp}
-                                    placeholder="Laptop baru, Liburan Bali..."
-                                    required
-                                />
-                            </div>
-                            <div>
-                                <label style={lbl}>Target (Rp)</label>
-                                <input
-                                    type="text"
-                                    value={form.targetAmount}
-                                    onChange={(e) =>
-                                        setForm({
-                                            ...form,
-                                            targetAmount: formatNumberInput(
-                                                e.target.value,
-                                            ),
-                                        })
-                                    }
-                                    style={inp}
-                                    placeholder="8.000.000"
-                                    required
-                                    inputMode="numeric"
-                                />
-                            </div>
-                            <div>
-                                <label style={lbl}>Wallet Penyimpanan</label>
-                                <DropdownMenu
-                                    label=""
-                                    value={form.walletId}
-                                    options={[
-                                        { value: "", label: "Pilih wallet" },
-                                        ...wallets.map((w) => ({
-                                            value: w._id,
-                                            label: w.name,
-                                        })),
-                                    ]}
-                                    onChange={(v) =>
-                                        setForm({
-                                            ...form,
-                                            walletId: v,
-                                        })
-                                    }
-                                />
-                            </div>
-                            <div>
-                                <label style={lbl}>Deadline (opsional)</label>
-                                <input
-                                    type="date"
-                                    value={form.deadline}
-                                    onChange={(e) =>
-                                        setForm({
-                                            ...form,
-                                            deadline: e.target.value,
-                                        })
-                                    }
-                                    style={inp}
-                                />
-                            </div>
-                            <div>
-                                <label style={lbl}>Prioritas</label>
-                                <DropdownMenu
-                                    label=""
-                                    value={form.priority}
-                                    options={[
-                                        { value: "high", label: "🔴 Tinggi" },
-                                        { value: "medium", label: "🟡 Sedang" },
-                                        { value: "low", label: "🟢 Rendah" },
-                                    ]}
-                                    onChange={(v) =>
-                                        setForm({ ...form, priority: v })
-                                    }
-                                />
-                            </div>
-                            <div>
-                                <label style={lbl}>Warna</label>
-                                <input
-                                    type="color"
-                                    value={form.color}
-                                    onChange={(e) =>
-                                        setForm({
-                                            ...form,
-                                            color: e.target.value,
-                                        })
-                                    }
-                                    style={{
-                                        ...inp,
-                                        height: "42px",
-                                        padding: "4px",
-                                    }}
-                                />
-                            </div>
-                            <div style={{ gridColumn: "1 / -1" }}>
-                                <label style={lbl}>Catatan</label>
-                                <input
-                                    value={form.note}
-                                    onChange={(e) =>
-                                        setForm({
-                                            ...form,
-                                            note: e.target.value,
-                                        })
-                                    }
-                                    style={inp}
-                                    placeholder="Beli laptop buat kerja..."
-                                />
-                            </div>
-                        </div>
-                        <button type="submit" style={btnSuccess}>
-                            Simpan Goal
+            {!loaded ? (
+                <div className="pl-skeleton-stack">
+                    <div className="pl-skel" style={{ height: 130 }} />
+                    <div className="pl-skel" style={{ height: 320 }} />
+                </div>
+            ) : goals.length === 0 ? (
+                <div className="pl-empty">
+                    <span className="pl-empty-icon">
+                        <FiTarget aria-hidden />
+                    </span>
+                    <strong>Belum ada goal tabungan</strong>
+                    <p>Tentukan target dan tanggalnya — DailyTrack menghitung berapa yang perlu disisihkan tiap minggu.</p>
+                    <div className="pl-empty-actions">
+                        <button type="button" className="btn-primary" onClick={() => setEditor({ mode: "new" })}>
+                            <FiPlus aria-hidden /> Buat goal pertama
                         </button>
-                    </form>
-                </Modal>
-            )}
-
-            {/* Goal aktif */}
-            {activeGoals.length > 0 && (
+                    </div>
+                </div>
+            ) : (
                 <>
-                    <h2
-                        style={{
-                            fontSize: "15px",
-                            fontWeight: "700",
-                            color: "var(--app-text-strong)",
-                            marginBottom: "14px",
-                        }}
-                    >
-                        Sedang Berjalan
-                    </h2>
-                    <div
-                        style={{
-                            display: "grid",
-                            gridTemplateColumns:
-                                "repeat(auto-fill, minmax(360px, 1fr))",
-                            gap: "16px",
-                            marginBottom: "32px",
-                        }}
-                    >
-                        {activeGoals.map((g) => (
-                            <GoalCard
-                                key={g._id}
-                                goal={g}
-                                wallets={wallets}
-                                onAddSaving={handleAddSaving}
-                                onDelete={handleDelete}
-                            />
-                        ))}
-                    </div>
-                </>
-            )}
-
-            {/* Goal selesai */}
-            {completedGoals.length > 0 && (
-                <>
-                    <h2
-                        style={{
-                            fontSize: "15px",
-                            fontWeight: "700",
-                            color: "var(--app-text-strong)",
-                            marginBottom: "14px",
-                        }}
-                    >
-                        ✅ Sudah Tercapai
-                    </h2>
-                    <div
-                        style={{
-                            display: "grid",
-                            gridTemplateColumns:
-                                "repeat(auto-fill, minmax(360px, 1fr))",
-                            gap: "16px",
-                        }}
-                    >
-                        {completedGoals.map((g) => (
-                            <GoalCard
-                                key={g._id}
-                                goal={g}
-                                wallets={wallets}
-                                onAddSaving={handleAddSaving}
-                                onDelete={handleDelete}
-                            />
-                        ))}
-                    </div>
-                </>
-            )}
-
-            {deleteModal.show && (
-                <Modal
-                    title="Hapus Goal"
-                    onClose={() => {
-                        setDeleteModal({ show: false, id: null, walletId: "" });
-                        setDeleteConfirmInput("");
-                        setDeleteConfirmError("");
-                    }}
-                >
-                    <div style={{ marginBottom: 12 }}>
-                        <div style={{ marginBottom: 8 }}>
-                            Dana tersisa akan dikembalikan ke dompet:
-                        </div>
-                        <DropdownMenu
-                            label=""
-                            value={wallets[0]?._id || ""}
-                            options={[
-                                { value: "", label: "Pilih dompet" },
-                                ...wallets.map((w) => ({
-                                    value: w._id,
-                                    label: w.name,
-                                })),
-                            ]}
-                            onChange={(v) =>
-                                setDeleteModal((d) => ({ ...d, walletId: v }))
-                            }
-                        />
-                    </div>
-                    <div style={{ marginBottom: 12 }}>
-                        <div
-                            style={{
-                                marginBottom: 8,
-                                color: "var(--app-muted)",
-                            }}
-                        >
-                            Ketik nama goal untuk konfirmasi hapus:
-                        </div>
-                        <input
-                            type="text"
-                            value={deleteConfirmInput}
-                            onChange={(e) =>
-                                setDeleteConfirmInput(e.target.value)
-                            }
-                            placeholder={
-                                goals.find((x) => x._id === deleteModal.id)
-                                    ?.name || ""
-                            }
-                            style={{ ...inp, marginBottom: 6 }}
-                        />
-                        {deleteConfirmError && (
-                            <div style={{ color: "#ef4444", marginBottom: 8 }}>
-                                {deleteConfirmError}
+                    {groups.active.length > 0 && (
+                        <section className="pl-overview is-goals">
+                            <div className="pl-overview-main">
+                                <span className="pl-eyebrow">Terkumpul di goal berjalan</span>
+                                <div className="pl-overview-amount">
+                                    <strong>{formatRupiah(overview.saved)}</strong>
+                                    <span>dari {formatRupiah(overview.target)}</span>
+                                </div>
+                                <Meter value={overallPct} height={12} label="Progres semua goal" />
+                                <div className="pl-legend">
+                                    <span>{overallPct}% dari total target</span>
+                                </div>
                             </div>
-                        )}
-                    </div>
-                    <div
-                        style={{
-                            display: "flex",
-                            gap: 8,
-                            justifyContent: "flex-end",
-                        }}
-                    >
-                        <button
-                            onClick={() => {
-                                setDeleteModal({ show: false, id: null, walletId: "" });
-                                setDeleteConfirmInput("");
-                                setDeleteConfirmError("");
-                            }}
-                            style={{
-                                padding: "8px 12px",
-                                borderRadius: 8,
-                                border: "none",
-                                backgroundColor: "var(--app-surface)",
-                                color: "var(--app-muted)",
-                                cursor: "pointer",
-                            }}
-                        >
-                            Batal
-                        </button>
-                        <button
-                            onClick={() => {
-                                const goal = goals.find(
-                                    (x) => x._id === deleteModal.id,
-                                );
-                                if (!goal) return;
-                                setDeleteConfirmError("");
-                                if (deleteConfirmInput !== goal.name) {
-                                    setDeleteConfirmError(
-                                        "Nama goal tidak cocok",
-                                    );
-                                    return;
-                                }
-                                confirmDelete(deleteModal.walletId);
-                                setDeleteConfirmInput("");
-                            }}
-                            disabled={
-                                !deleteModal.walletId ||
-                                deleteConfirmInput !==
-                                (goals.find((x) => x._id === deleteModal.id)
-                                    ?.name || "")
-                            }
-                            style={{
-                                padding: "8px 12px",
-                                backgroundColor: "#ef4444",
-                                color: "white",
-                                border: "none",
-                                borderRadius: 8,
-                                cursor: "pointer",
-                                fontWeight: 700,
-                                opacity:
-                                    !deleteModal.walletId ||
-                                        deleteConfirmInput !==
-                                        (goals.find(
-                                            (x) => x._id === deleteModal.id,
-                                        )?.name || "")
-                                        ? 0.6
-                                        : 1,
-                            }}
-                        >
-                            Hapus dan Kembalikan Dana
-                        </button>
-                    </div>
-                </Modal>
-            )}
+                            <div className="pl-overview-stats">
+                                <Stat
+                                    label="Perlu disisihkan / bulan"
+                                    value={formatRupiah(overview.needed)}
+                                    hint="agar semua goal tepat waktu"
+                                />
+                                <Stat
+                                    label="Laju menabungmu / bulan"
+                                    value={formatRupiah(overview.pace)}
+                                    tone={overview.pace >= overview.needed ? "ok" : "warn"}
+                                    hint="rata-rata 90 hari terakhir"
+                                />
+                                <div className="pl-counts">
+                                    {overview.onTrack > 0 && (
+                                        <span className="pl-pill tone-ok">{overview.onTrack} sesuai jadwal</span>
+                                    )}
+                                    {overview.behind > 0 && (
+                                        <span className="pl-pill tone-warn">{overview.behind} perlu perhatian</span>
+                                    )}
+                                </div>
+                            </div>
+                        </section>
+                    )}
 
-            {goals.length === 0 && (
-                <Card style={{ textAlign: "center", padding: "60px" }}>
-                    <div style={{ fontSize: "40px", marginBottom: "12px" }}>
-                        ⭐
-                    </div>
-                    <div
-                        style={{
-                            fontWeight: "600",
-                            color: "var(--app-text)",
-                            marginBottom: "6px",
-                        }}
-                    >
-                        Belum ada goal
-                    </div>
-                    <div
-                        style={{ color: "var(--app-muted)", fontSize: "14px" }}
-                    >
-                        Buat target tabungan pertama kamu!
-                    </div>
-                </Card>
+                    {tabs.length > 1 && (
+                        <div className="tx-chips pl-tabs" role="tablist">
+                            {tabs.map((t) => (
+                                <button
+                                    key={t.id}
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={tab === t.id}
+                                    className={`tx-chip ${tab === t.id ? "is-active" : ""}`}
+                                    onClick={() => setTab(t.id)}
+                                >
+                                    {t.label} <span className="pl-tab-count">{t.count}</span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
+                    {list.length === 0 ? (
+                        <div className="pl-empty is-compact">
+                            <strong>Tidak ada goal di sini</strong>
+                        </div>
+                    ) : (
+                        <div className="pl-goal-grid">
+                            {list.map((g) => (
+                                <GoalCard
+                                    key={g._id}
+                                    goal={g}
+                                    wallets={wallets}
+                                    onEdit={() => setEditor({ mode: "edit", goal: g })}
+                                    onChanged={reloadAll}
+                                />
+                            ))}
+                        </div>
+                    )}
+                </>
             )}
         </div>
     );
 }
 
-function GoalCard({ goal: g, wallets = [], onAddSaving, onDelete }) {
-    const [input, setInput] = useState("");
-    const [showInput, setShowInput] = useState(false);
-    const [mode, setMode] = useState("deposit"); // deposit or withdraw
-    const defaultWalletId = g.wallet?._id || g.wallet || wallets[0]?._id || "";
-    const [selectedWallet, setSelectedWallet] = useState("");
+function Stat({ label, value, hint, tone }) {
+    return (
+        <div className={`pl-stat ${tone ? `tone-${tone}` : ""}`}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+            {hint && <small>{hint}</small>}
+        </div>
+    );
+}
 
-    useEffect(() => {
-        setSelectedWallet((prev) => prev || defaultWalletId);
-    }, [defaultWalletId]);
-    const pCfg = PRIORITY_CFG[g.priority] || PRIORITY_CFG.medium;
+function Ring({ pct, color }) {
+    const r = 34;
+    const c = 2 * Math.PI * r;
+    const p = Math.max(0, Math.min(100, pct));
+    return (
+        <div className="pl-ring" style={{ "--ring": color }}>
+            <svg viewBox="0 0 80 80" aria-hidden>
+                <circle cx="40" cy="40" r={r} className="pl-ring-track" />
+                <circle
+                    cx="40"
+                    cy="40"
+                    r={r}
+                    className="pl-ring-fill"
+                    strokeDasharray={c}
+                    strokeDashoffset={c * (1 - p / 100)}
+                />
+            </svg>
+            <span>
+                {pct}
+                <small>%</small>
+            </span>
+        </div>
+    );
+}
+
+function GoalCard({ goal: g, wallets, onEdit, onChanged }) {
+    const [panel, setPanel] = useState(null); // null | "deposit" | "withdraw" | "delete" | "history"
+    const S = STATUS[g.status === "paused" ? "paused" : g.health] || STATUS["not-started"];
+    const P = PRIORITY[g.priority] || PRIORITY.medium;
+    const color = g.color || "#1e6e55";
+    const done = g.status === "completed" || g.health === "completed";
+    const maxMonthly = Math.max(1, ...(g.monthly || []).map((m) => Math.abs(m.net)));
+
+    const togglePause = async () => {
+        const pausing = g.status !== "paused";
+        const ok = await confirmDialog({
+            title: pausing ? `Jeda goal ${g.name}?` : `Lanjutkan goal ${g.name}?`,
+            message: pausing
+                ? "Goal tidak dihitung di ringkasan sampai dilanjutkan. Dana yang terkumpul tetap aman."
+                : "Goal kembali dihitung di ringkasan dan proyeksi.",
+            confirmLabel: pausing ? "Jeda" : "Lanjutkan",
+            danger: false,
+        });
+        if (!ok) return;
+        await updateGoalAPI(g._id, { status: pausing ? "paused" : "active" });
+        await onChanged();
+    };
 
     return (
-        <Card style={{ borderTop: `4px solid ${g.color}` }}>
-            {/* Header */}
-            <div
-                style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "flex-start",
-                    marginBottom: "14px",
-                }}
-            >
-                <div>
-                    <div
-                        style={{
-                            fontWeight: "700",
-                            fontSize: "16px",
-                            color: "var(--app-text-strong)",
-                        }}
-                    >
-                        {g.name}
-                    </div>
-                    <div
-                        style={{
-                            fontSize: "12px",
-                            color: pCfg.color,
-                            fontWeight: "600",
-                            marginTop: "3px",
-                        }}
-                    >
-                        {pCfg.label}
-                    </div>
-                    {g.note && (
-                        <div
-                            style={{
-                                fontSize: "12px",
-                                color: "var(--app-muted)",
-                                marginTop: "2px",
-                            }}
-                        >
-                            {g.note}
-                        </div>
-                    )}
+        <article className={`pl-goal ${done ? "is-done" : ""}`} style={{ "--goal": color }}>
+            <header className="pl-goal-head">
+                <Ring pct={g.percentage} color={color} />
+                <div className="pl-goal-title">
+                    <strong>{g.name}</strong>
+                    <span className="pl-budget-tags">
+                        <span className={`pl-pill tone-${S.tone}`}>{S.label}</span>
+                        {!done && <span className={`pl-pill tone-${P.tone} is-soft`}>{P.label}</span>}
+                    </span>
+                    <span className="pl-goal-money">
+                        <b>{formatRupiah(g.currentAmount)}</b> dari {formatRupiah(g.targetAmount)}
+                    </span>
                 </div>
-                {g.status === "completed" ? (
-                    <span
-                        style={{
-                            backgroundColor: "#d1fae5",
-                            color: "#065f46",
-                            padding: "4px 10px",
-                            borderRadius: "20px",
-                            fontSize: "12px",
-                            fontWeight: "700",
-                        }}
-                    >
-                        ✅ Tercapai
-                    </span>
-                ) : (
-                    <span
-                        style={{
-                            backgroundColor: "#e0e7ff",
-                            color: "#3730a3",
-                            padding: "4px 10px",
-                            borderRadius: "20px",
-                            fontSize: "12px",
-                            fontWeight: "600",
-                        }}
-                    >
-                        Aktif
-                    </span>
-                )}
-            </div>
-
-            {/* Jumlah */}
-            <div
-                style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    fontSize: "13px",
-                    marginBottom: "8px",
-                }}
-            >
-                <span style={{ color: "var(--app-muted)" }}>Terkumpul</span>
-                <span
-                    style={{
-                        fontWeight: "700",
-                        color: "var(--app-text-strong)",
-                    }}
-                >
-                    {formatRupiah(g.currentAmount)} /{" "}
-                    {formatRupiah(g.targetAmount)}
-                </span>
-            </div>
-
-            {/* Progress */}
-            <ProgressBar
-                percentage={g.percentage}
-                color={g.color}
-                height={10}
-                showLabel
-            />
-
-            {/* Info tambahan */}
-            <div
-                style={{
-                    display: "flex",
-                    gap: "16px",
-                    marginTop: "10px",
-                    fontSize: "12px",
-                    color: "var(--app-muted)",
-                }}
-            >
-                {g.deadline && <span>🗓️ {formatDateShort(g.deadline)}</span>}
-                {g.monthlyTarget > 0 && (
-                    <span>💵 {formatRupiah(g.monthlyTarget)}/bln</span>
-                )}
-                <span>Sisa {formatRupiah(g.remaining)}</span>
-            </div>
-
-            {/* Tambah tabungan */}
-            {g.status !== "completed" && (
-                <div style={{ marginTop: "14px" }}>
-                    {showInput ? (
-                        <div style={{ display: "grid", gap: "8px" }}>
-                            <div style={{ display: "flex", gap: 8 }}>
-                                <DropdownMenu
-                                    label=""
-                                    value={selectedWallet}
-                                    options={[
-                                        { value: "", label: "Pilih dompet" },
-                                        ...wallets.map((w) => ({
-                                            value: w._id,
-                                            label: w.name,
-                                        })),
-                                    ]}
-                                    onChange={(v) => setSelectedWallet(v)}
-                                />
-                                <div style={{ display: "flex", gap: 6 }}>
-                                    <button
-                                        onClick={() => setMode("deposit")}
-                                        style={{
-                                            padding: "9px 12px",
-                                            borderRadius: 8,
-                                            border:
-                                                mode === "deposit"
-                                                    ? "1px solid rgba(16, 185, 129, 0.35)"
-                                                    : "1px solid var(--app-border)",
-                                            backgroundColor:
-                                                mode === "deposit"
-                                                    ? "rgba(16, 185, 129, 0.14)"
-                                                    : "var(--app-surface-soft)",
-                                            color:
-                                                mode === "deposit"
-                                                    ? "#34d399"
-                                                    : "var(--app-muted)",
-                                            fontWeight: "700",
-                                            cursor: "pointer",
-                                        }}
-                                    >
-                                        Setor
-                                    </button>
-                                    <button
-                                        onClick={() => setMode("withdraw")}
-                                        style={{
-                                            padding: "9px 12px",
-                                            borderRadius: 8,
-                                            border:
-                                                mode === "withdraw"
-                                                    ? "1px solid rgba(251, 113, 133, 0.35)"
-                                                    : "1px solid var(--app-border)",
-                                            backgroundColor:
-                                                mode === "withdraw"
-                                                    ? "rgba(251, 113, 133, 0.14)"
-                                                    : "var(--app-surface-soft)",
-                                            color:
-                                                mode === "withdraw"
-                                                    ? "#fb7185"
-                                                    : "var(--app-muted)",
-                                            fontWeight: "700",
-                                            cursor: "pointer",
-                                        }}
-                                    >
-                                        Tarik
-                                    </button>
-                                </div>
-                            </div>
-                            <div style={{ display: "flex", gap: 8 }}>
-                                <input
-                                    type="text"
-                                    value={input}
-                                    onChange={(e) =>
-                                        setInput(
-                                            formatNumberInput(e.target.value),
-                                        )
-                                    }
-                                    placeholder={
-                                        mode === "deposit"
-                                            ? "Jumlah tabungan..."
-                                            : "Jumlah tarik..."
-                                    }
-                                    inputMode="numeric"
-                                    style={{
-                                        flex: 1,
-                                        padding: "9px 12px",
-                                        border: "1.5px solid var(--app-border)",
-                                        borderRadius: "8px",
-                                        fontSize: "14px",
-                                    }}
-                                />
-                                <button
-                                    onClick={() => {
-                                        onAddSaving(
-                                            g._id,
-                                            input,
-                                            selectedWallet,
-                                            mode,
-                                        );
-                                        setInput("");
-                                        setShowInput(false);
-                                    }}
-                                    style={{
-                                        padding: "9px 14px",
-                                        backgroundColor:
-                                            mode === "deposit"
-                                                ? "#10b981"
-                                                : "#ef4444",
-                                        color: "white",
-                                        border: "none",
-                                        borderRadius: "8px",
-                                        cursor: "pointer",
-                                        fontWeight: "700",
-                                    }}
-                                >
-                                    {mode === "deposit" ? "Tambah" : "Tarik"}
-                                </button>
-                                <button
-                                    onClick={() => setShowInput(false)}
-                                    style={{
-                                        padding: "9px 12px",
-                                        backgroundColor:
-                                            "var(--app-surface-soft)",
-                                        border: "none",
-                                        borderRadius: "8px",
-                                        cursor: "pointer",
-                                    }}
-                                >
-                                    ✕
-                                </button>
-                            </div>
-                        </div>
-                    ) : (
+                <div className="pl-icon-actions">
+                    <button type="button" onClick={onEdit} aria-label="Ubah goal">
+                        <FiEdit2 />
+                    </button>
+                    {!done && (
                         <button
-                            onClick={() => setShowInput(true)}
-                            style={{
-                                ...btnOutlineDashed,
-                                borderColor: g.color,
-                                color: g.color,
-                            }}
+                            type="button"
+                            onClick={togglePause}
+                            aria-label={g.status === "paused" ? "Lanjutkan goal" : "Jeda goal"}
                         >
-                            {"+ Tambah / Tarik Dana"}
+                            {g.status === "paused" ? <FiPlay /> : <FiPause />}
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        className="is-danger"
+                        onClick={() => setPanel(panel === "delete" ? null : "delete")}
+                        aria-label="Hapus goal"
+                    >
+                        <FiTrash2 />
+                    </button>
+                </div>
+            </header>
+
+            {/* Milestone */}
+            <div className="pl-milestones">
+                <Meter
+                    value={g.percentage}
+                    color={color}
+                    tone="cat"
+                    ticks={[25, 50, 75].map((at) => ({ at, done: g.percentage >= at, label: `${at}%` }))}
+                    label={`Progres ${g.name}`}
+                />
+                <ol>
+                    {(g.milestones || []).map((m) => (
+                        <li key={m.pct} className={m.reached ? "is-reached" : ""}>
+                            <span className="pl-ms-dot">{m.reached ? <FiCheck aria-hidden /> : m.pct === 100 ? <FiFlag aria-hidden /> : null}</span>
+                            <b>{m.pct}%</b>
+                            <small>{m.reached ? (m.reachedAt ? fmtDate(m.reachedAt, false) : "tercapai") : short(m.amount)}</small>
+                        </li>
+                    ))}
+                </ol>
+            </div>
+
+            {/* Rencana & proyeksi */}
+            {!done && <GoalPlan g={g} />}
+            {done && (
+                <div className="pl-plan is-done">
+                    <FiCheck aria-hidden />
+                    <span>
+                        Tercapai{g.completedAt ? ` pada ${fmtDate(g.completedAt)}` : ""}. {g.depositCount} kali setor.
+                    </span>
+                </div>
+            )}
+
+            {/* Setoran 6 bulan */}
+            <div className="pl-spark" aria-label="Setoran bersih 6 bulan terakhir">
+                {(g.monthly || []).map((m) => (
+                    <div key={`${m.year}-${m.month}`} className="pl-spark-col" title={`${MONTHS[m.month - 1]}: ${formatRupiah(m.net)}`}>
+                        <span
+                            className={`pl-spark-bar ${m.net < 0 ? "is-neg" : ""}`}
+                            style={{ height: `${Math.max(m.net ? 8 : 2, (Math.abs(m.net) / maxMonthly) * 100)}%` }}
+                        />
+                        <small>{MONTHS[m.month - 1].slice(0, 3)}</small>
+                    </div>
+                ))}
+            </div>
+
+            {/* Panel aksi */}
+            {panel === "deposit" || panel === "withdraw" ? (
+                <MoneyPanel g={g} wallets={wallets} mode={panel} onClose={() => setPanel(null)} onDone={onChanged} />
+            ) : panel === "delete" ? (
+                <DeletePanel g={g} wallets={wallets} onClose={() => setPanel(null)} onDone={onChanged} />
+            ) : panel === "history" ? (
+                <History g={g} onClose={() => setPanel(null)} />
+            ) : (
+                <div className="pl-goal-actions">
+                    {!done && g.status !== "paused" && (
+                        <button type="button" className="btn-primary pl-goal-cta" onClick={() => setPanel("deposit")}>
+                            <FiArrowDownLeft aria-hidden /> Setor
+                        </button>
+                    )}
+                    {g.currentAmount > 0 && (
+                        <button type="button" className="btn-ghost" onClick={() => setPanel("withdraw")}>
+                            <FiArrowUpRight aria-hidden /> Tarik
+                        </button>
+                    )}
+                    {g.recent?.length > 0 && (
+                        <button type="button" className="pl-link" onClick={() => setPanel("history")}>
+                            <FiClock aria-hidden /> Riwayat
                         </button>
                     )}
                 </div>
             )}
-
-            <button onClick={() => onDelete(g._id)} style={btnGhostFull}>
-                Hapus goal
-            </button>
-        </Card>
+        </article>
     );
 }
 
-const lbl = {
-    display: "block",
-    fontSize: "13px",
-    fontWeight: "600",
-    color: "var(--app-text)",
-    marginBottom: "6px",
-};
+function GoalPlan({ g }) {
+    const hasDeadline = Boolean(g.deadline);
+    const paceOk = g.projectedDate && (!hasDeadline || new Date(g.projectedDate) <= new Date(g.deadline));
+    return (
+        <div className={`pl-plan tone-${(STATUS[g.health] || {}).tone || "muted"}`}>
+            <div className="pl-plan-row">
+                <FiCalendar aria-hidden />
+                {hasDeadline ? (
+                    <span>
+                        Target <b>{fmtDate(g.deadline)}</b>
+                        {g.daysLeft >= 0 ? ` · ${g.daysLeft} hari lagi` : ` · lewat ${Math.abs(g.daysLeft)} hari`}
+                    </span>
+                ) : (
+                    <span>Tanpa tanggal target</span>
+                )}
+            </div>
+            {hasDeadline && g.remaining > 0 && (
+                <div className="pl-plan-need">
+                    <div>
+                        <small>Per minggu</small>
+                        <b>{formatRupiah(g.neededPerWeek)}</b>
+                    </div>
+                    <div>
+                        <small>Per bulan</small>
+                        <b>{formatRupiah(g.neededPerMonth)}</b>
+                    </div>
+                </div>
+            )}
+            <div className="pl-plan-row">
+                <FiTrendingUp aria-hidden />
+                {g.pacePerMonth > 0 ? (
+                    <span>
+                        Lajumu {formatRupiah(g.pacePerMonth)}/bln →{" "}
+                        <b className={paceOk ? "is-ok" : "is-warn"}>tercapai ±{fmtMonthYear(g.projectedDate)}</b>
+                    </span>
+                ) : (
+                    <span>Belum ada setoran dalam 90 hari terakhir.</span>
+                )}
+            </div>
+            {g.health === "behind" && g.gap > 0 && (
+                <div className="pl-plan-row is-warn">
+                    <FiClock aria-hidden />
+                    <span>
+                        Tertinggal <b>{formatRupiah(g.gap)}</b> dari jadwal menabung rata.
+                    </span>
+                </div>
+            )}
+        </div>
+    );
+}
 
-const inp = {
-    width: "100%",
-    padding: "10px 12px",
-    border: "1.5px solid var(--app-border)",
-    borderRadius: "10px",
-    fontSize: "14px",
-    boxSizing: "border-box",
-    backgroundColor: "var(--app-surface)",
-    color: "var(--app-text-strong)",
-};
+function MoneyPanel({ g, wallets, mode, onClose, onDone }) {
+    const deposit = mode === "deposit";
+    const [amount, setAmount] = useState("");
+    const [walletId, setWalletId] = useState(g.wallet?._id || g.wallet || wallets[0]?._id || "");
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+    const wallet = wallets.find((w) => w._id === walletId);
+    const parsed = parseNumberInput(amount);
 
-const btnPrimary = {
-    padding: "10px 20px",
-    background: "linear-gradient(135deg,#4f46e5,#7c3aed)",
-    color: "white",
-    border: "none",
-    borderRadius: "10px",
-    cursor: "pointer",
-    fontWeight: "700",
-    fontSize: "14px",
-};
+    const quick = deposit
+        ? [
+              g.neededPerWeek > 0 && { label: "Target minggu ini", value: g.neededPerWeek },
+              g.neededPerMonth > 0 && { label: "Target bulan ini", value: g.neededPerMonth },
+              g.remaining > 0 && { label: "Lunasi", value: g.remaining },
+          ].filter(Boolean)
+        : [
+              { label: "Setengah", value: Math.floor(g.currentAmount / 2) },
+              { label: "Semua", value: g.currentAmount },
+          ].filter((q) => q.value > 0);
 
-const btnSuccess = {
-    padding: "10px 24px",
-    backgroundColor: "#10b981",
-    color: "white",
-    border: "none",
-    borderRadius: "10px",
-    cursor: "pointer",
-    fontWeight: "700",
-    fontSize: "14px",
-};
+    const submit = async (e) => {
+        e.preventDefault();
+        setError("");
+        if (!parsed) return setError("Isi jumlahnya dulu.");
+        if (!walletId) return setError(deposit ? "Pilih wallet sumber." : "Pilih wallet tujuan.");
+        if (deposit && wallet && parsed > (wallet.balance || 0))
+            return setError(`Saldo ${wallet.name} tidak cukup (${formatRupiah(wallet.balance || 0)}).`);
+        if (!deposit && parsed > g.currentAmount) return setError("Melebihi dana yang terkumpul.");
 
-const btnDanger = {
-    padding: "8px 12px",
-    backgroundColor: "#ef4444",
-    color: "white",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-    fontWeight: "700",
-};
+        const after = deposit ? g.currentAmount + parsed : g.currentAmount - parsed;
+        const pctAfter = g.targetAmount ? Math.round((after / g.targetAmount) * 100) : 0;
+        const ok = await confirmDialog({
+            title: deposit ? `Setor ${formatRupiah(parsed)} ke ${g.name}?` : `Tarik ${formatRupiah(parsed)} dari ${g.name}?`,
+            message: deposit
+                ? `Dipotong dari ${wallet?.name}. Progres naik ke ${pctAfter}%.`
+                : `Masuk ke ${wallet?.name}. Progres turun ke ${pctAfter}%.`,
+            confirmLabel: deposit ? "Setor" : "Tarik dana",
+            danger: !deposit,
+        });
+        if (!ok) return;
+        setBusy(true);
+        try {
+            await addSavingAPI(g._id, { amount: parsed, walletId, action: mode });
+            onClose();
+            await onDone();
+        } catch (err) {
+            setError(err.response?.data?.message || "Gagal menyimpan.");
+        } finally {
+            setBusy(false);
+        }
+    };
 
-const btnGhost = {
-    padding: "8px 12px",
-    backgroundColor: "var(--app-surface-soft)",
-    color: "var(--app-text)",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-};
+    return (
+        <form className="pl-panel" onSubmit={submit}>
+            <header>
+                <strong>{deposit ? "Setor ke goal" : "Tarik dari goal"}</strong>
+                <button type="button" className="pop-icon-btn" onClick={onClose} aria-label="Tutup">
+                    <FiX />
+                </button>
+            </header>
+            <div className="pl-money">
+                <em>Rp</em>
+                <input
+                    autoFocus
+                    value={amount}
+                    onChange={(e) => setAmount(formatNumberInput(e.target.value))}
+                    placeholder="0"
+                    inputMode="numeric"
+                    aria-label="Jumlah"
+                />
+            </div>
+            {quick.length > 0 && (
+                <div className="pl-quick">
+                    {quick.map((q) => (
+                        <button key={q.label} type="button" onClick={() => setAmount(formatNumberInput(String(q.value)))}>
+                            {q.label} · {short(q.value)}
+                        </button>
+                    ))}
+                </div>
+            )}
+            <label className="pl-field">
+                <span>{deposit ? "Dari wallet" : "Ke wallet"}</span>
+                <DropdownMenu
+                    value={walletId}
+                    options={wallets.map((w) => ({ value: w._id, label: `${w.name} · ${formatRupiah(w.balance || 0)}` }))}
+                    onChange={setWalletId}
+                />
+            </label>
+            {error && <div className="pl-error">{error}</div>}
+            <div className="pl-form-actions">
+                <button type="button" className="btn-ghost" onClick={onClose}>
+                    Batal
+                </button>
+                <button type="submit" className={`btn-primary ${deposit ? "" : "is-danger"}`} disabled={busy}>
+                    {busy ? "Menyimpan..." : deposit ? "Setor" : "Tarik"}
+                </button>
+            </div>
+        </form>
+    );
+}
 
-const btnGhostFull = {
-    ...btnGhost,
-    width: "100%",
-    textAlign: "center",
-    marginTop: "8px",
-    color: "#fb7185",
-    fontSize: "12px",
-    backgroundColor: "rgba(251, 113, 133, 0.12)",
-    border: "1px solid rgba(251, 113, 133, 0.22)",
-    fontWeight: "700",
-};
+function DeletePanel({ g, wallets, onClose, onDone }) {
+    const [walletId, setWalletId] = useState(g.wallet?._id || g.wallet || wallets[0]?._id || "");
+    const [error, setError] = useState("");
+    const hasFunds = g.currentAmount > 0;
+    const target = wallets.find((w) => w._id === walletId);
 
-const btnOutlineDashed = {
-    width: "100%",
-    padding: "10px",
-    backgroundColor: "rgba(79, 70, 229, 0.08)",
-    color: "var(--accent)",
-    border: "1.5px solid rgba(79, 70, 229, 0.24)",
-    borderRadius: "10px",
-    cursor: "pointer",
-    fontWeight: "700",
-    fontSize: "13px",
-};
+    const run = async () => {
+        if (hasFunds && !walletId) return setError("Pilih wallet untuk menerima dana.");
+        const ok = await confirmDialog({
+            title: `Hapus goal ${g.name}?`,
+            message: hasFunds
+                ? `${formatRupiah(g.currentAmount)} dikembalikan ke ${target?.name}. Riwayat setoran tetap tercatat di transaksi.`
+                : "Goal ini belum punya tabungan.",
+            confirmLabel: "Hapus goal",
+        });
+        if (!ok) return;
+        try {
+            await deleteGoalAPI(g._id, hasFunds ? { walletId } : undefined);
+            await onDone();
+        } catch (err) {
+            setError(err.response?.data?.message || "Gagal menghapus goal.");
+        }
+    };
+
+    return (
+        <div className="pl-panel is-danger">
+            <header>
+                <strong>Hapus goal</strong>
+                <button type="button" className="pop-icon-btn" onClick={onClose} aria-label="Tutup">
+                    <FiX />
+                </button>
+            </header>
+            {hasFunds ? (
+                <label className="pl-field">
+                    <span>Kembalikan {formatRupiah(g.currentAmount)} ke</span>
+                    <DropdownMenu
+                        value={walletId}
+                        options={wallets.map((w) => ({ value: w._id, label: w.name }))}
+                        onChange={setWalletId}
+                    />
+                </label>
+            ) : (
+                <p className="pl-muted">Belum ada dana di goal ini.</p>
+            )}
+            {error && <div className="pl-error">{error}</div>}
+            <div className="pl-form-actions">
+                <button type="button" className="btn-ghost" onClick={onClose}>
+                    Batal
+                </button>
+                <button type="button" className="btn-primary is-danger" onClick={run}>
+                    Hapus goal
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function History({ g, onClose }) {
+    return (
+        <div className="pl-panel">
+            <header>
+                <strong>Riwayat terakhir</strong>
+                <button type="button" className="pop-icon-btn" onClick={onClose} aria-label="Tutup">
+                    <FiX />
+                </button>
+            </header>
+            <ul className="pl-history">
+                {g.recent.map((e) => (
+                    <li key={e._id}>
+                        <span className={`pl-hist-icon ${e.kind === "deposit" ? "is-in" : "is-out"}`}>
+                            {e.kind === "deposit" ? <FiArrowDownLeft /> : <FiArrowUpRight />}
+                        </span>
+                        <span>{e.kind === "deposit" ? "Setor" : "Tarik"}</span>
+                        <small>{fmtDate(e.date)}</small>
+                        <b className={e.kind === "deposit" ? "is-ok" : ""}>
+                            {e.kind === "deposit" ? "+" : "−"}
+                            {formatRupiah(e.amount)}
+                        </b>
+                    </li>
+                ))}
+            </ul>
+            {g.lastDepositAt && (
+                <p className="pl-muted">
+                    {g.depositCount} kali setor · terakhir {fmtDate(g.lastDepositAt)}
+                </p>
+            )}
+        </div>
+    );
+}
+
+function GoalEditor({ initial, wallets, onClose, onSaved }) {
+    const isEdit = Boolean(initial);
+    const [form, setForm] = useState(() =>
+        initial
+            ? {
+                  name: initial.name,
+                  targetAmount: formatNumberInput(String(initial.targetAmount)),
+                  deadline: initial.deadline ? new Date(initial.deadline).toISOString().slice(0, 10) : "",
+                  priority: initial.priority || "medium",
+                  color: initial.color || "#1e6e55",
+                  note: initial.note || "",
+                  walletId: initial.wallet?._id || initial.wallet || "",
+              }
+            : { ...emptyForm, walletId: wallets.find((w) => w.isDefault)?._id || "" },
+    );
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+    const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+    const target = parseNumberInput(form.targetAmount);
+    const saved = initial?.currentAmount || 0;
+    const remaining = Math.max(0, target - saved);
+    const days = form.deadline ? Math.ceil((new Date(`${form.deadline}T23:59:59`) - new Date()) / DAY_MS) : null;
+    const perWeek = days > 0 ? Math.ceil(remaining / Math.max(1, days / 7)) : 0;
+    const perMonth = days > 0 ? Math.ceil(remaining / Math.max(1, days / 30.44)) : 0;
+
+    const submit = async (e) => {
+        e.preventDefault();
+        setError("");
+        if (!form.name.trim()) return setError("Beri nama goal.");
+        if (!target) return setError("Isi target tabungan.");
+        if (isEdit) {
+            const ok = await confirmDialog({
+                title: "Simpan perubahan goal?",
+                message:
+                    target !== initial.targetAmount
+                        ? `Target ${formatRupiah(initial.targetAmount)} → ${formatRupiah(target)}.`
+                        : "Rencana setoran akan dihitung ulang.",
+                confirmLabel: "Simpan",
+                danger: false,
+            });
+            if (!ok) return;
+        }
+        setBusy(true);
+        try {
+            const payload = { ...form, name: form.name.trim(), targetAmount: target, deadline: form.deadline || null };
+            if (isEdit) await updateGoalAPI(initial._id, payload);
+            else await createGoalAPI(payload);
+            await onSaved();
+        } catch (err) {
+            setError(err.response?.data?.message || "Gagal menyimpan goal.");
+            setBusy(false);
+        }
+    };
+
+    const preview = (
+        <div className="pl-preview" style={{ "--goal": form.color }}>
+            <span className="pl-eyebrow">Rencana menabung</span>
+            <strong className="pl-preview-name">{form.name || "Goal baru"}</strong>
+            <div className="pl-preview-amount">{formatRupiah(target)}</div>
+            {saved > 0 && <small className="pl-muted">Sudah terkumpul {formatRupiah(saved)}</small>}
+            <div className="pl-preview-rows">
+                {days > 0 && remaining > 0 ? (
+                    <>
+                        <div>
+                            <small>Per minggu</small>
+                            <b>{formatRupiah(perWeek)}</b>
+                        </div>
+                        <div>
+                            <small>Per bulan</small>
+                            <b>{formatRupiah(perMonth)}</b>
+                        </div>
+                        <div>
+                            <small>Waktu</small>
+                            <b>{days} hari</b>
+                        </div>
+                    </>
+                ) : (
+                    <p className="pl-muted">Pilih tanggal target untuk melihat berapa yang perlu disisihkan.</p>
+                )}
+            </div>
+            <ol className="pl-preview-ms">
+                {[25, 50, 75, 100].map((m) => (
+                    <li key={m}>
+                        <b>{m}%</b> {formatRupiah(Math.round((target * m) / 100))}
+                    </li>
+                ))}
+            </ol>
+        </div>
+    );
+
+    return (
+        <FormScreen
+            backLabel="Goals"
+            title={isEdit ? "Ubah goal" : "Goal baru"}
+            subtitle="Tentukan target, tanggal, dan wallet tempat uangnya disimpan."
+            onClose={onClose}
+            aside={preview}
+            width={980}
+        >
+            <form onSubmit={submit} className="pl-form-grid">
+                <label className="pl-field pl-span">
+                    <span>Nama goal</span>
+                    <input
+                        className="pl-input"
+                        value={form.name}
+                        onChange={(e) => set("name", e.target.value)}
+                        placeholder="Laptop baru, Liburan Bali..."
+                        autoFocus={!isEdit}
+                    />
+                </label>
+                <label className="pl-field">
+                    <span>Target</span>
+                    <div className="pl-money">
+                        <em>Rp</em>
+                        <input
+                            value={form.targetAmount}
+                            onChange={(e) => set("targetAmount", formatNumberInput(e.target.value))}
+                            placeholder="8.000.000"
+                            inputMode="numeric"
+                        />
+                    </div>
+                </label>
+                <label className="pl-field">
+                    <span>Tanggal target</span>
+                    <DatePicker
+                        value={form.deadline}
+                        onChange={(v) => set("deadline", v)}
+                        placeholder="Tanpa tanggal"
+                        min={new Date().toISOString().slice(0, 10)}
+                    />
+                </label>
+                <label className="pl-field">
+                    <span>Wallet penyimpanan</span>
+                    <DropdownMenu
+                        value={form.walletId}
+                        options={[{ value: "", label: "Belum ditentukan" }, ...wallets.map((w) => ({ value: w._id, label: w.name }))]}
+                        onChange={(v) => set("walletId", v)}
+                    />
+                </label>
+                <label className="pl-field">
+                    <span>Prioritas</span>
+                    <DropdownMenu
+                        value={form.priority}
+                        options={[
+                            { value: "high", label: "Tinggi" },
+                            { value: "medium", label: "Sedang" },
+                            { value: "low", label: "Rendah" },
+                        ]}
+                        onChange={(v) => set("priority", v)}
+                    />
+                </label>
+                <div className="pl-field pl-span">
+                    <span>Warna</span>
+                    <ColorSwatches value={form.color} onChange={(c) => set("color", c)} />
+                </div>
+                <label className="pl-field pl-span">
+                    <span>Catatan</span>
+                    <input
+                        className="pl-input"
+                        value={form.note}
+                        onChange={(e) => set("note", e.target.value)}
+                        placeholder="Untuk apa goal ini? (opsional)"
+                    />
+                </label>
+                {error && <div className="pl-error pl-span">{error}</div>}
+                <div className="pl-form-actions pl-span">
+                    <button type="button" className="btn-ghost" onClick={onClose}>
+                        Batal
+                    </button>
+                    <button type="submit" className="btn-primary" disabled={busy}>
+                        {busy ? "Menyimpan..." : isEdit ? "Simpan perubahan" : "Buat goal"}
+                    </button>
+                </div>
+            </form>
+        </FormScreen>
+    );
+}

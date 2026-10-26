@@ -5,12 +5,13 @@ import {
     useState,
     useEffect,
     useCallback,
-    getTransactionsAPI, 
 } from "react";
 import {
     getSummaryAPI,
     getWalletsAPI,
     getCategoriesAPI,
+    getTransactionsAPI,
+    getGamificationAPI,
 } from "../services/api";
 import { useAuth } from "./AuthContext";
 
@@ -34,6 +35,8 @@ export function FinanceProvider({ children }) {
     const [categories, setCategories] = useState([]);
     const [totalBalance, setTotalBalance] = useState(0);
     const [loadingData, setLoadingData] = useState(true);
+    // Persona, XP, level, streak & lencana (dihitung di server)
+    const [gamification, setGamification] = useState(null);
 
       // Fetch year range — sekali saja saat user login
     useEffect(() => {
@@ -78,6 +81,13 @@ export function FinanceProvider({ children }) {
         } finally {
             setLoadingData(false);
         }
+        // Gamifikasi dimuat terpisah supaya data utama tidak ikut menunggu
+        try {
+            const gRes = await getGamificationAPI();
+            setGamification(gRes.data);
+        } catch (err) {
+            console.error(err);
+        }
     }, [user, month, year]);
 
     useEffect(() => {
@@ -100,6 +110,8 @@ export function FinanceProvider({ children }) {
                 categories,
                 totalBalance,
                 loadingData,
+                gamification,
+                setGamification,
                 refresh,
             }}
         >

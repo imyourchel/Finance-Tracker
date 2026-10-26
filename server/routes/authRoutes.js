@@ -13,9 +13,16 @@ const {
     changePassword,
     forgotPassword,
     resetPassword,
+    googleLogin,
 } = require("../controllers/authController");
 const { protect } = require("../middleware/authMiddleware");
-const { registerRules, loginRules, changePasswordRules } = require("../validators/authValidator");
+const {
+    registerRules,
+    loginRules,
+    changePasswordRules,
+    forgotPasswordRules,
+    resetPasswordRules,
+} = require("../validators/authValidator");
 const validate = require("../middleware/validate");
 
 // rate limiter
@@ -43,8 +50,21 @@ const upload = multer({ storage });
 // routes
 router.post("/register", authLimiter, registerRules, validate, register);
 router.post("/login", authLimiter, loginRules, validate, login);
-router.post("/forgot-password", forgotPassword);
-router.put("/reset-password/:token", resetPassword);
+router.post("/google", authLimiter, googleLogin);
+router.post(
+    "/forgot-password",
+    authLimiter,
+    forgotPasswordRules,
+    validate,
+    forgotPassword,
+);
+router.put(
+    "/reset-password/:token",
+    authLimiter,
+    resetPasswordRules,
+    validate,
+    resetPassword,
+);
 
 router.get("/profile", protect, getProfile);
 router.put("/profile", protect, upload.single("avatar"), updateProfile);
@@ -53,6 +73,8 @@ router.put("/password", protect, changePasswordRules, validate, changePassword);
 router.get("/verify-email", async (req, res) => {
     try {
         const { token } = req.query;
+        if (!token || typeof token !== "string")
+            return res.status(400).json({ message: "Token tidak valid" });
         const user = await User.findOne({ emailVerifyToken: token });
         if (!user) return res.status(400).json({ message: "Token tidak valid" });
 
@@ -66,4 +88,4 @@ router.get("/verify-email", async (req, res) => {
     }
 });
 
-module.exports = router;
+module.exports = router;

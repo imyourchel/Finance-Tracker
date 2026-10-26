@@ -14,7 +14,7 @@ const walletSchema = new mongoose.Schema(
         },
         type: {
             type: String,
-            enum: ["cash", "bank", "e-wallet", "investment", "other"],
+            enum: ["cash", "bank", "e-wallet", "investment", "gold", "other"],
             default: "cash",
         },
         balance: {
@@ -24,6 +24,19 @@ const walletSchema = new mongoose.Schema(
         initialBalance: {
             type: Number,
             default: 0,
+        },
+
+        // === KHUSUS WALLET EMAS ===
+        // Saldo emas = goldWeight (gram) x goldBuyPrice (Rp per gram)
+        goldWeight: {
+            type: Number,
+            default: null,
+            min: 0,
+        },
+        goldBuyPrice: {
+            type: Number,
+            default: null,
+            min: 0,
         },
 
         icon: {

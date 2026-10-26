@@ -1,7 +1,14 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { FiCalendar, FiChevronLeft, FiChevronRight, FiX } from "react-icons/fi";
+import { useDismiss, usePopoverPosition } from "./usePopover";
 
-const DAY_NAMES = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+const DAY_NAMES = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+const MONTHS = [
+    "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+    "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+];
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
 
 function toYMD(date) {
     const y = date.getFullYear();
@@ -10,324 +17,180 @@ function toYMD(date) {
     return `${y}-${m}-${d}`;
 }
 
-function buildCalendarCells(year, monthIndex) {
-    const firstDay = new Date(year, monthIndex, 1).getDay();
-    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-    const prevMonthDays = new Date(year, monthIndex, 0).getDate();
-    const cells = [];
+const parseYMD = (v) => (v ? new Date(`${String(v).slice(0, 10)}T00:00:00`) : null);
 
-    for (let i = firstDay - 1; i >= 0; i -= 1) {
-        cells.push({ day: prevMonthDays - i, current: false, filler: false });
-    }
-    for (let d = 1; d <= daysInMonth; d += 1) {
-        cells.push({ day: d, current: true, filler: false });
-    }
-    while (cells.length % 7 !== 0) {
-        cells.push({ day: 0, current: false, filler: true });
-    }
-    return cells;
+function formatDateID(v) {
+    const d = parseYMD(v);
+    if (!d || Number.isNaN(d.getTime())) return "";
+    return `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}`;
 }
 
+// 6 minggu penuh, termasuk tanggal bulan sebelum/sesudah (dengan tanggal yang benar)
+function buildCells(year, monthIndex) {
+    const first = new Date(year, monthIndex, 1);
+    const start = new Date(year, monthIndex, 1 - first.getDay());
+    return Array.from({ length: 42 }, (_, i) => {
+        const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+        return { date: d, current: d.getMonth() === monthIndex };
+    });
+}
+
+/**
+ * Pemilih tanggal bertema. value & onChange memakai format "YYYY-MM-DD".
+ * Prop lama (accent, width, placeholder) tetap didukung.
+ */
 export default function DatePicker({
     value,
     onChange,
-    placeholder,
-    accent = "#7c3aed",
-    width = "209px",
+    placeholder = "Pilih tanggal",
+    accent,
+    width = "100%",
+    clearable = true,
+    min,
+    max,
 }) {
     const [open, setOpen] = useState(false);
-    const [viewDate, setViewDate] = useState(() =>
-        value ? new Date(`${value}T00:00:00`) : new Date(),
-    );
+    const [view, setView] = useState(() => parseYMD(value) || new Date());
     const triggerRef = useRef(null);
-    const portalRef = useRef(null);
-    const [pos, setPos] = useState({ top: 0, left: 0, width: 320 });
+    const panelRef = useRef(null);
 
-    useEffect(() => {
-        if (value) setViewDate(new Date(`${value}T00:00:00`));
-    }, [value]);
+    const close = useCallback(() => setOpen(false), []);
+    useDismiss(open, [triggerRef, panelRef], close);
+    const pos = usePopoverPosition(open, triggerRef, panelRef, { width: 300 });
 
-    useLayoutEffect(() => {
-        if (!open) return;
-        const update = () => {
-            const rect = triggerRef.current?.getBoundingClientRect();
-            if (!rect) return;
-            const maxWidth = Math.min(320, window.innerWidth - 16);
-            let left = rect.left;
-            if (left + maxWidth > window.innerWidth - 8) {
-                left = window.innerWidth - maxWidth - 8;
-            }
-            
-            const calendarHeight = portalRef.current?.offsetHeight || 350;
-            let top = rect.bottom + 8;
-            
-            // Cek apakah melebihi tinggi layar
-            if (top + calendarHeight > window.innerHeight) {
-                const spaceAbove = rect.top - 8;
-                const spaceBelow = window.innerHeight - rect.bottom - 8;
-                // Pilih area yang memiliki ruang lebih luas
-                if (spaceAbove > spaceBelow) {
-                    top = Math.max(8, rect.top - calendarHeight - 8);
-                }
-            }
-
-            setPos({
-                top,
-                left: Math.max(8, left),
-                width: maxWidth,
-            });
-        };
-        update();
-        const handle = requestAnimationFrame(update);
-        window.addEventListener("resize", update);
-        window.addEventListener("scroll", update, true);
-        return () => {
-            cancelAnimationFrame(handle);
-            window.removeEventListener("resize", update);
-            window.removeEventListener("scroll", update, true);
-        };
-    }, [open]);
-
-    useEffect(() => {
-        const onDocClick = (e) => {
-            if (
-                triggerRef.current?.contains(e.target) ||
-                portalRef.current?.contains(e.target)
-            )
-                return;
-            setOpen(false);
-        };
-        const onEsc = (e) => {
-            if (e.key === "Escape") setOpen(false);
-        };
-        document.addEventListener("mousedown", onDocClick);
-        document.addEventListener("keydown", onEsc);
-        return () => {
-            document.removeEventListener("mousedown", onDocClick);
-            document.removeEventListener("keydown", onEsc);
-        };
-    }, []);
-
-    const year = viewDate.getFullYear();
-    const monthIndex = viewDate.getMonth();
-    const monthLabel = viewDate.toLocaleString("en-US", { month: "long" });
-    const cells = buildCalendarCells(year, monthIndex);
+    const year = view.getFullYear();
+    const monthIndex = view.getMonth();
+    const cells = buildCells(year, monthIndex);
     const today = toYMD(new Date());
+    const selected = value ? String(value).slice(0, 10) : "";
 
-    const selectDate = (date) => {
-        onChange(toYMD(date));
-        setOpen(false);
+    const openPicker = () => {
+        setView(parseYMD(value) || new Date());
+        setOpen(true);
     };
-
-    const calendar = (
-        <div
-            ref={portalRef}
-            data-calendar-portal
-            style={{
-                position: "fixed",
-                top: pos.top,
-                left: pos.left,
-                zIndex: 10000,
-                width: pos.width,
-                maxWidth: "90vw",
-                backgroundColor: "var(--app-surface)",
-                border: "1px solid var(--app-border)",
-                borderRadius: 16,
-                boxShadow: "0 20px 50px rgba(0,0,0,0.24)",
-                padding: 14,
-            }}
-        >
-            <div
-                style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    marginBottom: 12,
-                }}
-            >
-                <button
-                    type="button"
-                    onClick={() =>
-                        setViewDate(new Date(year, monthIndex - 1, 1))
-                    }
-                    style={navBtn}
-                >
-                    ←
-                </button>
-                <div
-                    style={{ fontWeight: 800, color: "var(--app-text-strong)" }}
-                >
-                    {monthLabel} {year}
-                </div>
-                <button
-                    type="button"
-                    onClick={() =>
-                        setViewDate(new Date(year, monthIndex + 1, 1))
-                    }
-                    style={navBtn}
-                >
-                    →
-                </button>
-            </div>
-
-            <div
-                style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(7, 1fr)",
-                    gap: 6,
-                    marginBottom: 8,
-                }}
-            >
-                {DAY_NAMES.map((d) => (
-                    <div
-                        key={d}
-                        style={{
-                            textAlign: "center",
-                            fontSize: 11,
-                            color: "var(--app-muted)",
-                            fontWeight: 700,
-                        }}
-                    >
-                        {d}
-                    </div>
-                ))}
-            </div>
-
-            <div
-                style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(7, 1fr)",
-                    gap: 6,
-                }}
-            >
-                {cells.map((cell, index) => {
-                    if (cell.filler) return <div key={`f-${index}`} />;
-                    const cellDate = new Date(year, monthIndex, cell.day);
-                    const selected = value === toYMD(cellDate);
-                    const isToday = toYMD(cellDate) === today;
-                    return (
-                        <button
-                            key={`${cell.current ? "c" : "p"}-${cell.day}-${index}`}
-                            type="button"
-                            onClick={() => selectDate(cellDate)}
-                            style={{
-                                height: 36,
-                                borderRadius: 10,
-                                border: selected
-                                    ? "none"
-                                    : `1px solid ${isToday ? accent : "transparent"}`,
-                                backgroundColor: selected
-                                    ? accent
-                                    : isToday
-                                      ? `${accent}15`
-                                      : "transparent",
-                                color: selected
-                                    ? "white"
-                                    : "var(--app-text-strong)",
-                                cursor: "pointer",
-                                fontWeight: selected ? 800 : 600,
-                            }}
-                        >
-                            {cell.day}
-                        </button>
-                    );
-                })}
-            </div>
-
-            <div
-                style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    marginTop: 12,
-                }}
-            >
-                <button
-                    type="button"
-                    onClick={() => {
-                        onChange("");
-                        setOpen(false);
-                    }}
-                    style={{ ...navBtn, width: "auto", padding: "8px 12px" }}
-                >
-                    Clear
-                </button>
-                <button
-                    type="button"
-                    onClick={() => selectDate(new Date())}
-                    style={{ ...navBtn, width: "auto", padding: "8px 12px" }}
-                >
-                    Today
-                </button>
-            </div>
-        </div>
-    );
+    const pick = (d) => {
+        onChange(toYMD(d));
+        setOpen(false);
+        triggerRef.current?.focus();
+    };
+    const outOfRange = (ymd) => (min && ymd < min) || (max && ymd > max);
 
     return (
-        <div style={{ position: "relative", width }}>
+        <div className="dp" style={{ width, "--dp-accent": accent || "var(--accent)" }}>
             <button
                 ref={triggerRef}
                 type="button"
-                onClick={() => setOpen((p) => !p)}
-                style={{
-                    width: "100%",
-                    border: "1.5px solid var(--app-border)",
-                    borderRadius: "12px",
-                    backgroundColor: "var(--app-surface)",
-                    padding: "10px 12px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "10px",
-                    cursor: "pointer",
-                    color: value
-                        ? "var(--app-text-strong)"
-                        : "var(--app-muted)",
-                    textAlign: "left",
-                }}
+                className={`field-trigger ${open ? "is-open" : ""}`}
+                onClick={() => (open ? setOpen(false) : openPicker())}
+                aria-haspopup="dialog"
+                aria-expanded={open}
             >
-                <div
-                    style={{
-                        width: 34,
-                        height: 34,
-                        borderRadius: 10,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        backgroundColor: `${accent}18`,
-                        color: accent,
-                        flexShrink: 0,
-                        fontSize: 16,
-                    }}
-                >
-                    📅
-                </div>
-                <div style={{ flex: 1 }}>
-                    <div
-                        style={{
-                            fontSize: 12,
-                            color: "var(--app-muted)",
-                            marginBottom: 2,
+                <FiCalendar className="field-trigger-icon" aria-hidden />
+                <span className={`field-trigger-text ${selected ? "" : "is-placeholder"}`}>
+                    {selected ? formatDateID(selected) : placeholder}
+                </span>
+                {clearable && selected && (
+                    <span
+                        role="button"
+                        tabIndex={-1}
+                        className="field-trigger-clear"
+                        aria-label="Hapus tanggal"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onChange("");
                         }}
                     >
-                        {placeholder}
-                    </div>
-                    <div style={{ fontSize: 14, fontWeight: 700 }}>
-                        {value || "Pilih tanggal"}
-                    </div>
-                </div>
-                <div style={{ color: "var(--app-muted)" }}>▾</div>
+                        <FiX aria-hidden />
+                    </span>
+                )}
             </button>
-            {open && createPortal(calendar, document.body)}
+
+            {open &&
+                createPortal(
+                    <div
+                        ref={panelRef}
+                        className={`pop-panel dp-panel pop-${pos.placement}`}
+                        style={{ top: pos.top, left: pos.left, width: pos.width, "--dp-accent": accent || "var(--accent)" }}
+                        role="dialog"
+                        aria-label="Pilih tanggal"
+                    >
+                        <div className="dp-head">
+                            <button
+                                type="button"
+                                className="pop-icon-btn"
+                                onClick={() => setView(new Date(year, monthIndex - 1, 1))}
+                                aria-label="Bulan sebelumnya"
+                            >
+                                <FiChevronLeft />
+                            </button>
+                            <div className="dp-title">
+                                {MONTHS[monthIndex]} {year}
+                            </div>
+                            <button
+                                type="button"
+                                className="pop-icon-btn"
+                                onClick={() => setView(new Date(year, monthIndex + 1, 1))}
+                                aria-label="Bulan berikutnya"
+                            >
+                                <FiChevronRight />
+                            </button>
+                        </div>
+
+                        <div className="dp-grid dp-days">
+                            {DAY_NAMES.map((d) => (
+                                <div key={d}>{d}</div>
+                            ))}
+                        </div>
+                        <div className="dp-grid">
+                            {cells.map(({ date, current }) => {
+                                const ymd = toYMD(date);
+                                const disabled = outOfRange(ymd);
+                                return (
+                                    <button
+                                        key={ymd}
+                                        type="button"
+                                        disabled={disabled}
+                                        className={[
+                                            "dp-cell",
+                                            current ? "" : "is-outside",
+                                            ymd === today ? "is-today" : "",
+                                            ymd === selected ? "is-selected" : "",
+                                        ].join(" ")}
+                                        onClick={() => pick(date)}
+                                    >
+                                        {date.getDate()}
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        <div className="pop-foot">
+                            {clearable && selected ? (
+                                <button
+                                    type="button"
+                                    className="pop-text-btn"
+                                    onClick={() => {
+                                        onChange("");
+                                        setOpen(false);
+                                    }}
+                                >
+                                    Hapus
+                                </button>
+                            ) : (
+                                <span />
+                            )}
+                            <button
+                                type="button"
+                                className="pop-text-btn is-accent"
+                                onClick={() => pick(new Date())}
+                                disabled={outOfRange(today)}
+                            >
+                                Hari ini
+                            </button>
+                        </div>
+                    </div>,
+                    document.body,
+                )}
         </div>
     );
 }
-
-const navBtn = {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    border: "1px solid var(--app-border)",
-    backgroundColor: "var(--app-surface-soft)",
-    color: "var(--app-text-strong)",
-    cursor: "pointer",
-    fontWeight: 800,
-};

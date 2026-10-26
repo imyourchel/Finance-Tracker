@@ -1,0 +1,651 @@
+/* ===== Onboarding: sambutan, tur, langkah awal ===== */
+
+/* Tombol */
+.onb-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 44px;
+    padding: 0 20px;
+    border-radius: 12px;
+    font: inherit;
+    font-size: 14.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.15s ease, background 0.15s ease;
+}
+.onb-btn.is-sm {
+    height: 36px;
+    padding: 0 14px;
+    font-size: 13.5px;
+    border-radius: 10px;
+}
+.onb-btn.is-primary {
+    border: 0;
+    background: var(--accent);
+    color: #fff !important;
+}
+.onb-btn.is-primary:hover {
+    background: var(--accent-strong);
+    transform: translateY(-1px);
+    filter: none;
+}
+.onb-btn.is-ghost {
+    border: 1px solid var(--app-border-strong);
+    background: transparent;
+    color: var(--app-text-strong) !important;
+}
+.onb-btn.is-ghost:hover {
+    background: var(--app-surface-soft);
+    filter: none;
+}
+
+/* ── Sambutan ── */
+.onb-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 15000;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    background: rgba(8, 18, 15, 0.55);
+    backdrop-filter: blur(5px);
+    animation: onbFade 240ms ease-out;
+}
+@keyframes onbFade {
+    from {
+        opacity: 0;
+    }
+}
+.onb-welcome {
+    width: min(860px, 100%);
+    max-height: calc(100vh - 40px);
+    overflow: auto;
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr);
+    border-radius: 24px;
+    background: var(--app-surface);
+    box-shadow: 0 40px 100px -30px rgba(0, 0, 0, 0.6);
+    animation: onbRise 420ms cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+@keyframes onbRise {
+    from {
+        opacity: 0;
+        transform: translateY(16px) scale(0.97);
+    }
+}
+.onb-welcome-art {
+    position: relative;
+    overflow: hidden;
+    min-height: 320px;
+    background:
+        radial-gradient(260px 220px at 30% 30%, rgba(184, 146, 63, 0.35), transparent 70%),
+        radial-gradient(300px 260px at 80% 90%, rgba(79, 191, 148, 0.22), transparent 70%),
+        #0e2a23;
+}
+.onb-welcome-art img {
+    position: absolute;
+    border-radius: 50%;
+    object-fit: cover;
+    box-shadow:
+        0 0 0 4px rgba(255, 255, 255, 0.08),
+        0 0 0 8px rgba(184, 146, 63, 0.5),
+        0 24px 40px -14px rgba(0, 0, 0, 0.6);
+}
+.onb-m1 {
+    width: 170px;
+    height: 170px;
+    left: 36px;
+    top: 56px;
+    animation: onbFloat 6s ease-in-out infinite;
+}
+.onb-m2 {
+    width: 110px;
+    height: 110px;
+    right: 28px;
+    bottom: 48px;
+    animation: onbFloat 7s ease-in-out -2s infinite;
+}
+@keyframes onbFloat {
+    50% {
+        transform: translateY(-10px);
+    }
+}
+.onb-glow {
+    position: absolute;
+    left: -60px;
+    bottom: -90px;
+    width: 260px;
+    height: 260px;
+    border-radius: 50%;
+    border: 34px solid rgba(255, 255, 255, 0.05);
+}
+.onb-welcome-body {
+    display: flex;
+    flex-direction: column;
+    padding: 36px 36px 28px;
+}
+.onb-kicker {
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--brass);
+}
+.onb-welcome h2 {
+    margin: 8px 0 10px;
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: 40px;
+    line-height: 1.05;
+    color: var(--app-text-strong);
+}
+.onb-welcome h2 em {
+    font-style: italic;
+    color: var(--accent);
+}
+.onb-lead {
+    margin: 0;
+    font-size: 14.5px;
+    line-height: 1.6;
+    color: var(--app-text);
+}
+.onb-points {
+    list-style: none;
+    margin: 20px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.onb-points li {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+.onb-points li > span {
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+    font-size: 17px;
+    color: var(--accent);
+    background: var(--accent-bg);
+}
+.onb-points strong {
+    font-size: 14px;
+    color: var(--app-text-strong);
+}
+.onb-points p {
+    margin: 2px 0 0;
+    font-size: 13px;
+    color: var(--app-muted);
+}
+.onb-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 26px;
+}
+.onb-note {
+    margin-top: 10px;
+    text-align: right;
+    font-size: 12px;
+    color: var(--app-muted);
+}
+
+/* ── Tur ── */
+.onb-tour {
+    position: fixed;
+    inset: 0;
+    z-index: 15000;
+}
+.onb-spot {
+    position: fixed;
+    border-radius: 14px;
+    box-shadow:
+        0 0 0 3px rgba(184, 146, 63, 0.9),
+        0 0 0 9999px rgba(8, 18, 15, 0.58);
+    transition:
+        top 320ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        left 320ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        width 320ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        height 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    pointer-events: none;
+}
+.onb-spot::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: inherit;
+    border: 2px solid rgba(233, 217, 176, 0.7);
+    animation: onbPulse 1.8s ease-out infinite;
+}
+@keyframes onbPulse {
+    from {
+        opacity: 0.9;
+        transform: scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: scale(1.06);
+    }
+}
+.onb-dim {
+    position: fixed;
+    inset: 0;
+    background: rgba(8, 18, 15, 0.58);
+    backdrop-filter: blur(2px);
+}
+.onb-tip {
+    position: fixed;
+    width: 340px;
+    max-width: calc(100vw - 32px);
+    box-sizing: border-box;
+    padding: 18px 18px 16px;
+    border-radius: 18px;
+    background: var(--app-surface);
+    border: 1px solid var(--app-border);
+    box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.5);
+    animation: onbRise 280ms cubic-bezier(0.2, 0.9, 0.3, 1.1);
+    transition:
+        top 320ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        left 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.onb-tour.is-centered .onb-tip {
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    animation: none;
+}
+.onb-tip-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.onb-step {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--brass);
+}
+.onb-x {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--app-muted) !important;
+    cursor: pointer;
+}
+.onb-x:hover {
+    background: var(--app-surface-soft);
+    filter: none;
+}
+.onb-tip h3 {
+    margin: 6px 0 6px;
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: 24px;
+    line-height: 1.15;
+    color: var(--app-text-strong);
+}
+.onb-tip p {
+    margin: 0;
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--app-text);
+}
+.onb-dots {
+    display: flex;
+    gap: 6px;
+    margin: 14px 0 12px;
+}
+.onb-dots i {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: var(--app-border-strong);
+    transition: width 0.25s ease, background 0.25s ease;
+}
+.onb-dots i.is-done {
+    background: var(--accent-border);
+}
+.onb-dots i.is-on {
+    width: 22px;
+    background: var(--accent);
+}
+.onb-tip-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+/* ── Langkah awal ── */
+.onb-check {
+    position: fixed;
+    z-index: 900;
+    left: calc(236px + 20px);
+    bottom: 20px;
+}
+.onb-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    height: 46px;
+    padding: 0 16px 0 7px;
+    border-radius: 999px;
+    border: 1px solid var(--app-border);
+    background: var(--app-surface);
+    box-shadow: 0 14px 34px -14px rgba(0, 0, 0, 0.35);
+    font: inherit;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--app-text-strong) !important;
+    cursor: pointer;
+    animation: onbRise 300ms ease-out;
+}
+.onb-pill:hover {
+    border-color: var(--accent-border);
+    filter: none;
+}
+.onb-ring {
+    --p: 0%;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background:
+        radial-gradient(closest-side, var(--app-surface) 76%, transparent 78% 100%),
+        conic-gradient(var(--brass) var(--p), var(--app-border) 0);
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--app-text-strong);
+}
+.onb-panel {
+    width: 300px;
+    max-height: min(560px, calc(100vh - 40px));
+    overflow: auto;
+    box-sizing: border-box;
+    padding: 16px;
+    border-radius: 18px;
+    border: 1px solid var(--app-border);
+    background:
+        radial-gradient(320px 120px at 100% 0%, rgba(184, 146, 63, 0.12), transparent 70%),
+        var(--app-surface);
+    box-shadow: 0 24px 50px -20px rgba(0, 0, 0, 0.45);
+    animation: onbRise 300ms ease-out;
+}
+.onb-panel header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+}
+.onb-panel header div {
+    display: flex;
+    flex-direction: column;
+}
+.onb-panel header strong {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: 22px;
+    line-height: 1.1;
+    color: var(--app-text-strong);
+}
+.onb-panel header span {
+    margin-top: 2px;
+    font-size: 12.5px;
+    color: var(--app-muted);
+}
+.onb-icon-btn {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border: 0;
+    border-radius: 9px;
+    background: var(--app-surface-soft);
+    color: var(--app-muted) !important;
+    cursor: pointer;
+}
+.onb-bar {
+    height: 6px;
+    margin: 12px 0 10px;
+    border-radius: 999px;
+    background: var(--app-border);
+    overflow: hidden;
+}
+.onb-bar span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #b8923f, #e3c77e);
+    transition: width 600ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.onb-panel ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.onb-panel li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 6px;
+    border-radius: 10px;
+}
+.onb-panel li:hover {
+    background: var(--app-surface-soft);
+}
+.onb-panel li > div {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+.onb-panel li strong {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--app-text-strong);
+}
+.onb-panel li span:not(.onb-tick) {
+    font-size: 12px;
+    color: var(--app-muted);
+}
+.onb-panel li.is-done strong {
+    color: var(--app-muted);
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in srgb, var(--app-muted) 50%, transparent);
+}
+.onb-tick {
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1.5px dashed var(--app-border-strong);
+    font-size: 13px;
+}
+.onb-panel li.is-done .onb-tick {
+    border: 0;
+    color: #fff;
+    background: var(--success);
+    animation: onbPop 360ms cubic-bezier(0.2, 0.9, 0.3, 1.5);
+}
+@keyframes onbPop {
+    from {
+        transform: scale(0.4);
+    }
+}
+.onb-go {
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border: 0;
+    border-radius: 9px;
+    background: var(--accent-bg);
+    color: var(--accent) !important;
+    cursor: pointer;
+}
+.onb-go:hover {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    filter: none;
+}
+.onb-hide {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 4px 6px;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 12.5px;
+    color: var(--app-muted) !important;
+    cursor: pointer;
+}
+.onb-hide:hover {
+    color: var(--app-text-strong) !important;
+    filter: none;
+}
+.onb-complete {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding-top: 4px;
+}
+.onb-complete p {
+    margin: 0;
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--app-text);
+}
+.onb-burst {
+    position: absolute;
+    right: 20px;
+    top: -10px;
+    width: 1px;
+    height: 1px;
+}
+.onb-burst i {
+    position: absolute;
+    width: 6px;
+    height: 10px;
+    border-radius: 2px;
+    background: var(--brass);
+    transform: rotate(calc(var(--i) * 36deg)) translateY(0);
+    animation: onbBurst 1.4s ease-out forwards;
+}
+.onb-burst i:nth-child(odd) {
+    background: var(--accent);
+}
+@keyframes onbBurst {
+    to {
+        transform: rotate(calc(var(--i) * 36deg)) translateY(-44px);
+        opacity: 0;
+    }
+}
+
+/* ── Layar kecil ── */
+@media (max-width: 900px) {
+    .onb-check {
+        left: 16px;
+        bottom: calc(var(--mobile-nav-h, 0px) + 16px);
+    }
+    .onb-panel {
+        width: min(340px, calc(100vw - 32px));
+        max-height: calc(100vh - var(--mobile-nav-h, 0px) - 40px);
+    }
+    .onb-welcome {
+        grid-template-columns: 1fr;
+    }
+    .onb-welcome-art {
+        min-height: 170px;
+    }
+    .onb-m1 {
+        width: 120px;
+        height: 120px;
+        left: 50%;
+        top: 26px;
+        margin-left: -100px;
+    }
+    .onb-m2 {
+        width: 80px;
+        height: 80px;
+        right: auto;
+        left: 50%;
+        margin-left: 30px;
+        bottom: 22px;
+    }
+    .onb-welcome-body {
+        padding: 22px 20px 20px;
+    }
+    .onb-welcome h2 {
+        font-size: 30px;
+    }
+    .onb-actions {
+        flex-direction: column-reverse;
+    }
+    .onb-actions .onb-btn {
+        width: 100%;
+    }
+    .onb-note {
+        text-align: center;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .onb-welcome,
+    .onb-tip,
+    .onb-panel,
+    .onb-pill,
+    .onb-m1,
+    .onb-m2,
+    .onb-spot::after,
+    .onb-burst i {
+        animation: none !important;
+    }
+}
+
+/* Hero Pencapaian: ikon api yang belum menyala jangan jadi kotak terang */
+.ach-hero .gm-flame.is-cold .gm-flame-icon {
+    color: rgba(215, 228, 222, 0.55);
+    background: rgba(255, 255, 255, 0.07);
+}
+
+/* Pil "Langkah awal": jangan menutupi konten */
+@media (min-width: 901px) and (max-width: 1100px) {
+    .onb-check {
+        left: calc(76px + 16px);
+    }
+}
+@media (max-width: 900px) {
+    .onb-pill {
+        height: 44px;
+        padding: 0 6px;
+        gap: 0;
+    }
+    .onb-pill-label,
+    .onb-pill > svg {
+        display: none;
+    }
+}
+@media (max-width: 900px) {
+    .onb-glow {
+        display: none;
+    }
+}

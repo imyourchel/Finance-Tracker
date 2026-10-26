@@ -1,4 +1,6 @@
+import { FiRepeat, FiArrowDownLeft, FiArrowUpRight, FiEdit2, FiTrash2 } from "react-icons/fi";
 import { formatRupiah, formatDateShort, TYPE_COLOR } from "../../utils/format";
+import { CATEGORY_ICONS } from "../../utils/categoryIcons";
 
 const MOOD_EMOJI = {
     // new keys
@@ -22,7 +24,7 @@ export default function TransactionItem({ transaction: t, onDelete, onEdit }) {
     const sign = t.type === "income" ? "+" : t.type === "expense" ? "-" : "↔";
     const transferTitle =
         t.type === "expense" ? "Transfer Keluar" : "Transfer Masuk";
-    const title = t.isTransfer ? transferTitle : t.category?.name || "Lainnya";
+    const title = t.isTransfer ? transferTitle : t.debtId ? (t.type === "income" ? "Utang / pelunasan masuk" : "Pinjaman / bayar utang") : t.goalId ? (t.type === "income" ? "Tarik dari goal" : "Tabungan goal") : t.category?.name || "Lainnya";
     let walletLabel;
     if (t.isTransfer && t.transferTo) {
         if (t.type === "expense") {
@@ -36,6 +38,11 @@ export default function TransactionItem({ transaction: t, onDelete, onEdit }) {
         walletLabel = t.wallet?.name || "—";
     }
 
+    const Icon = t.isTransfer
+        ? FiRepeat
+        : CATEGORY_ICONS[t.category?.icon] || (t.type === "income" ? FiArrowDownLeft : FiArrowUpRight);
+    const iconColor = t.isTransfer ? "var(--accent)" : t.category?.color || color;
+
     return (
         <div
             style={{
@@ -46,28 +53,40 @@ export default function TransactionItem({ transaction: t, onDelete, onEdit }) {
                 borderBottom: "1px solid var(--app-border)",
             }}
         >
-            {/* Ikon kategori */}
+            {/* Ikon kategori (+ mood kecil di pojok) */}
             <div
                 style={{
+                    position: "relative",
                     width: "40px",
                     height: "40px",
-                    borderRadius: "10px",
+                    borderRadius: "11px",
                     flexShrink: 0,
-                    backgroundColor: (t.category?.color || color) + "18",
+                    backgroundColor: `color-mix(in srgb, ${iconColor} 14%, transparent)`,
+                    color: iconColor,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     fontSize: "18px",
                 }}
             >
-                {MOOD_EMOJI[t.mood] ||
-                    (t.isTransfer
-                        ? "🔄"
-                        : t.type === "income"
-                          ? "📈"
-                          : t.type === "expense"
-                            ? "📉"
-                            : "🔄")}
+                <Icon aria-hidden />
+                {MOOD_EMOJI[t.mood] && (
+                    <span
+                        title="Mood"
+                        style={{
+                            position: "absolute",
+                            right: "-5px",
+                            bottom: "-5px",
+                            fontSize: "13px",
+                            lineHeight: 1,
+                            background: "var(--app-surface)",
+                            borderRadius: "50%",
+                            padding: "1px",
+                        }}
+                    >
+                        {MOOD_EMOJI[t.mood]}
+                    </span>
+                )}
             </div>
 
             {/* Info transaksi */}
@@ -161,7 +180,7 @@ export default function TransactionItem({ transaction: t, onDelete, onEdit }) {
             </div>
 
             {/* Tombol aksi */}
-            {((onEdit && !t.isTransfer) || onDelete) && (
+            {!t.debtId && ((onEdit && !t.isTransfer) || onDelete) && (
                 <div style={{ display: "flex", gap: "4px", flexShrink: 0 }}>
                     {onEdit && !t.isTransfer && (
                         <button
@@ -177,7 +196,7 @@ export default function TransactionItem({ transaction: t, onDelete, onEdit }) {
                                 fontSize: "13px",
                             }}
                         >
-                            ✏️
+                            <FiEdit2 aria-label="Edit" />
                         </button>
                     )}
                     {onDelete && (
@@ -194,7 +213,7 @@ export default function TransactionItem({ transaction: t, onDelete, onEdit }) {
                                 fontSize: "13px",
                             }}
                         >
-                            🗑️
+                            <FiTrash2 aria-label="Hapus" />
                         </button>
                     )}
                 </div>

@@ -1,0 +1,360 @@
+/* ===== Sisa aman sampai gajian ===== */
+.pd-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) auto minmax(0, 1fr);
+    gap: 28px;
+    align-items: stretch;
+    padding: 22px 24px;
+    border-radius: var(--radius-lg, 18px);
+    border: 1px solid var(--app-border);
+    background:
+        radial-gradient(520px 200px at 0% 0%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 70%),
+        var(--app-surface);
+    box-shadow: var(--app-card-shadow);
+}
+.pd-skeleton {
+    min-height: 210px;
+    background: linear-gradient(90deg, var(--app-surface-soft), var(--app-border), var(--app-surface-soft));
+    background-size: 200% 100%;
+    animation: wd-shimmer 1.2s linear infinite;
+}
+.pd-card.is-waspada {
+    background:
+        radial-gradient(520px 200px at 0% 0%, rgba(217, 144, 43, 0.12), transparent 70%),
+        var(--app-surface);
+}
+.pd-card.is-minus {
+    background:
+        radial-gradient(520px 200px at 0% 0%, color-mix(in srgb, var(--danger) 12%, transparent), transparent 70%),
+        var(--app-surface);
+}
+.pd-main {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+.pd-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--app-muted);
+}
+.pd-payday {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0;
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #7a5a17;
+    background: rgba(184, 146, 63, 0.14);
+}
+[data-theme="dark"] .pd-payday {
+    color: #e9d9b0;
+}
+.pd-big {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+.pd-big strong {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: 44px;
+    line-height: 1.05;
+    color: var(--app-text-strong);
+    font-variant-numeric: tabular-nums;
+}
+.pd-big span {
+    font-size: 15px;
+    color: var(--app-muted);
+}
+.pd-today {
+    margin: 0;
+    font-size: 13.5px;
+    color: var(--app-text);
+}
+.pd-today.is-over {
+    color: var(--danger);
+    font-weight: 600;
+}
+.pd-bars {
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 56px;
+    margin-top: 12px;
+}
+.pd-bars span {
+    flex: 1;
+    min-width: 2px;
+    border-radius: 3px 3px 1px 1px;
+    background: color-mix(in srgb, var(--accent) 55%, transparent);
+    transition: height 500ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.pd-bars span.is-over {
+    background: color-mix(in srgb, var(--danger) 70%, transparent);
+}
+.pd-bars span.is-future {
+    background: repeating-linear-gradient(
+        180deg,
+        var(--app-surface-soft) 0 4px,
+        transparent 4px 8px
+    );
+    border: 1px dashed var(--app-border);
+    border-bottom: 0;
+}
+.pd-bars i {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 0;
+    border-top: 1.5px dashed var(--brass);
+    pointer-events: none;
+}
+.pd-bars-legend {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--app-muted);
+}
+
+.pd-countdown {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 0 8px;
+    border-left: 1px solid var(--app-border);
+    border-right: 1px solid var(--app-border);
+}
+.pd-ring {
+    --p: 0%;
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background:
+        radial-gradient(closest-side, var(--app-surface) 82%, transparent 83% 100%),
+        conic-gradient(var(--brass) var(--p), var(--app-border) 0);
+}
+.pd-ring > div {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.05;
+}
+.pd-ring strong {
+    font-size: 34px;
+    font-weight: 800;
+    color: var(--app-text-strong);
+    font-variant-numeric: tabular-nums;
+}
+.pd-ring span {
+    font-size: 12px;
+    color: var(--app-muted);
+}
+.pd-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 700;
+}
+.pd-status.is-aman {
+    color: var(--success);
+    background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+.pd-status.is-waspada {
+    color: #b06c12;
+    background: rgba(217, 144, 43, 0.14);
+}
+[data-theme="dark"] .pd-status.is-waspada {
+    color: #f3c27a;
+}
+.pd-status.is-minus {
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.pd-math {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+.pd-math > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 13.5px;
+}
+.pd-math dt {
+    color: var(--app-muted);
+}
+.pd-math dd {
+    margin: 0;
+    font-weight: 600;
+    color: var(--app-text-strong);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.pd-math dd.is-neg {
+    color: var(--danger);
+}
+.pd-math > div.is-total {
+    padding-top: 8px;
+    border-top: 1px solid var(--app-border);
+}
+.pd-math > div.is-total dt {
+    color: var(--app-text-strong);
+    font-weight: 600;
+}
+.pd-math > div.is-total dd {
+    font-size: 15px;
+    font-weight: 800;
+}
+.pd-proj {
+    margin: 2px 0 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--app-text);
+}
+.pd-bills {
+    list-style: none;
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: var(--app-surface-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.pd-bills li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--app-muted);
+}
+.pd-bills li span:first-child {
+    color: var(--app-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.pd-bills strong {
+    color: var(--app-text-strong);
+    font-weight: 600;
+}
+.pd-bills .pd-more {
+    display: block;
+}
+.pd-edit {
+    align-self: flex-start;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    text-decoration: none;
+}
+.pd-edit:hover {
+    text-decoration: underline;
+}
+
+/* Belum diatur */
+.pd-setup {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+}
+.pd-setup-text h3 {
+    margin: 6px 0 4px;
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: 26px;
+    line-height: 1.15;
+    color: var(--app-text-strong);
+}
+.pd-setup-text p {
+    margin: 0;
+    max-width: 60ch;
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--app-muted);
+}
+.pd-setup-form {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.pd-err {
+    width: 100%;
+    font-size: 12.5px;
+    color: var(--danger);
+}
+
+@keyframes wd-shimmer {
+    to {
+        background-position: -200% 0;
+    }
+}
+
+@media (max-width: 1100px) {
+    .pd-card {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .pd-countdown {
+        border-right: 0;
+    }
+    .pd-math {
+        grid-column: 1 / -1;
+    }
+}
+@media (max-width: 640px) {
+    .pd-card,
+    .pd-setup {
+        grid-template-columns: 1fr;
+    }
+    .pd-countdown {
+        border: 0;
+        flex-direction: row;
+    }
+}
+
+/* ── HP: hitung mundur lebih ringkas ── */
+@media (max-width: 640px) {
+    .pd-card {
+        gap: 18px;
+        padding: 18px;
+    }
+    .pd-big strong {
+        font-size: 36px;
+    }
+    .pd-countdown {
+        justify-content: flex-start;
+        gap: 14px;
+        padding: 14px 0 0;
+        border-top: 1px solid var(--app-border);
+    }
+    .pd-ring {
+        width: 76px;
+        height: 76px;
+    }
+    .pd-ring strong {
+        font-size: 24px;
+    }
+    .pd-ring span {
+        font-size: 10.5px;
+    }
+}

@@ -4,384 +4,319 @@ const Wallet = require("../models/Wallet");
 const Budget = require("../models/Budget");
 const Goal = require("../models/Goal");
 const User = require("../models/User");
-const sendEmail = require("../utils/sendEmail");
+const { getBudgets } = require("../controllers/budgetController");
+const { _internal: gami } = require("../controllers/gamificationController");
+const callHandler = require("./callHandler");
+const { claimSent, releaseSent } = require("./state");
+const { layout, send, rupiah, esc, emailConfigured } = require("./email");
+const { wib, dayKey, startOfKey, addDays, toMinutes, DAY_MS } = require("./time");
 
-// ============================================================
-// HELPER: Format Rupiah
-// ============================================================
-const formatRupiah = (n) =>
-    "Rp " + Number(n).toLocaleString("id-ID");
+/*
+ * Job terjadwal DailyTrack
+ * ────────────────────────
+ * Semua job idempoten: aman dijalankan berkali-kali.
+ * - Lokal: dijalankan oleh utils/scheduler.js tiap menit (lihat jadwalnya di sana).
+ * - Vercel: dipanggil lewat /api/cron/* sesuai vercel.json.
+ * Waktu "hari ini" dan jam pengingat selalu WIB.
+ */
 
-// ============================================================
-// JOB 1: Recurring transactions — setiap hari jam 00:05
-// ============================================================
-exports.runRecurring = async (req, res) => {
-    try {
-        const today = new Date();
-        const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+const log = (job, msg) => console.log(`[${job}] ${msg}`);
 
-        const recurrings = await Recurring.find({
-            isActive: true,
-            nextRunDate: { $lte: todayStart },
-        });
+// ── Tagihan & pemasukan rutin ───────────────────────────────────────
+function advance(date, frequency) {
+    const d = new Date(date);
+    if (frequency === "daily") d.setUTCDate(d.getUTCDate() + 1);
+    else if (frequency === "weekly") d.setUTCDate(d.getUTCDate() + 7);
+    else if (frequency === "yearly") d.setUTCFullYear(d.getUTCFullYear() + 1);
+    else {
+        // bulanan: tanggal 31 → akhir bulan berikutnya, bukan meloncat ke bulan depannya lagi
+        const day = d.getUTCDate();
+        d.setUTCDate(1);
+        d.setUTCMonth(d.getUTCMonth() + 1);
+        const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+        d.setUTCDate(Math.min(day, last));
+    }
+    return d;
+}
 
-        for (const rec of recurrings) {
+async function runRecurringJob(now = new Date()) {
+    const due = await Recurring.find({ isActive: true, nextRunDate: { $lte: now } }).lean();
+    let created = 0;
+    for (const rec of due) {
+        let runDate = new Date(rec.nextRunDate);
+        // Kejar ketinggalan (mis. server mati beberapa hari), maksimal 62 kali per rutin
+        for (let i = 0; i < 62 && runDate <= now; i += 1) {
+            if (rec.endDate && runDate > new Date(rec.endDate)) {
+                await Recurring.updateOne({ _id: rec._id }, { $set: { isActive: false } });
+                break;
+            }
+            const next = advance(runDate, rec.frequency);
+            const ended = rec.endDate && next > new Date(rec.endDate);
+            // Klaim atomik: hanya satu proses yang berhasil memajukan nextRunDate ini
+            const claimed = await Recurring.findOneAndUpdate(
+                { _id: rec._id, isActive: true, nextRunDate: runDate },
+                { $set: { nextRunDate: next, lastRunDate: runDate, ...(ended && { isActive: false }) } },
+                { new: true },
+            );
+            if (!claimed) break;
+
             await Transaction.create({
                 user: rec.user,
                 wallet: rec.wallet,
                 type: rec.type,
                 amount: rec.amount,
                 category: rec.category,
-                description: rec.description + " (recurring)",
-                date: todayStart,
+                description: rec.description || "",
+                date: runDate,
                 isRecurring: true,
                 recurringId: rec._id,
             });
-
-            const wallet = await Wallet.findById(rec.wallet);
-            if (wallet) {
-                wallet.balance += rec.type === "income" ? rec.amount : -rec.amount;
-                await wallet.save();
-            }
-
-            const next = new Date(rec.nextRunDate);
-            if (rec.frequency === "daily") next.setDate(next.getDate() + 1);
-            else if (rec.frequency === "weekly") next.setDate(next.getDate() + 7);
-            else if (rec.frequency === "monthly") next.setMonth(next.getMonth() + 1);
-            else if (rec.frequency === "yearly") next.setFullYear(next.getFullYear() + 1);
-
-            rec.lastRunDate = todayStart;
-            rec.nextRunDate = next;
-            if (rec.endDate && next > rec.endDate) rec.isActive = false;
-            await rec.save();
+            await Wallet.updateOne(
+                { _id: rec.wallet, user: rec.user },
+                { $inc: { balance: rec.type === "income" ? rec.amount : -rec.amount } },
+            );
+            created += 1;
+            if (ended) break;
+            runDate = next;
         }
-
-        console.log(`[runRecurring] Selesai, ${recurrings.length} recurring diproses`);
-        res.json({ ok: true, processed: recurrings.length });
-    } catch (err) {
-        console.error("[runRecurring] Error:", err.message);
-        res.status(500).json({ error: err.message });
     }
-};
+    if (created) log("recurring", `${created} transaksi rutin dibuat dari ${due.length} jadwal`);
+    return { due: due.length, created };
+}
 
-// ============================================================
-// JOB 2: Rollover budget — tanggal 1 setiap bulan jam 00:10
-// ============================================================
-exports.runRollover = async (req, res) => {
-    try {
-        const now = new Date();
-        const lastMonth = now.getMonth() === 0 ? 12 : now.getMonth();
-        const lastYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
-        const thisMonth = now.getMonth() + 1;
-        const thisYear = now.getFullYear();
+// ── Rollover budget ─────────────────────────────────────────────────
+// Rollover sekarang dihitung langsung saat budget dibuka (lihat budgetController),
+// jadi job ini sengaja tidak mengubah limit lagi supaya tidak terhitung dua kali.
+async function runRolloverJob() {
+    return { skipped: true, reason: "Rollover dihitung otomatis di budgetController" };
+}
 
-        const budgets = await Budget.find({ rollover: true, month: lastMonth, year: lastYear });
+// ── Budget hampir habis / jebol ─────────────────────────────────────
+async function budgetStatusFor(userId, t) {
+    const list = await callHandler(getBudgets, { user: userId, query: { month: t.month, year: t.year } });
+    return Array.isArray(list) ? list : [];
+}
 
-        let count = 0;
+async function runBudgetAlertJob(now = new Date()) {
+    const t = wib(now);
+    const userIds = await Budget.distinct("user", { month: t.month, year: t.year });
+    let sent = 0;
+    for (const uid of userIds) {
+        const user = await User.findById(uid).select("name email notifications isActive").lean();
+        if (!user?.email || user.isActive === false || user.notifications?.budgetAlert === false) continue;
+
+        const budgets = await budgetStatusFor(uid, t);
+        const alerts = [];
         for (const b of budgets) {
-            const sisa = b.limit - b.spent;
-            if (sisa <= 0) continue;
-
-            const existing = await Budget.findOne({
-                user: b.user,
-                category: b.category,
-                month: thisMonth,
-                year: thisYear,
-            });
-            if (existing) {
-                existing.limit += sisa;
-                await existing.save();
-                count++;
-            }
+            const over = b.spent > (b.effectiveLimit ?? b.limit);
+            const pct = b.percentage ?? 0;
+            if (!over && pct < (b.alertThreshold || 80)) continue;
+            const key = `budget:${b._id}:${over ? "over" : "warn"}:${t.year}-${t.month}`;
+            if (await claimSent(uid, key)) alerts.push({ b, over, pct, key });
         }
+        if (!alerts.length) continue;
 
-        console.log(`[runRollover] Selesai, ${count} budget di-rollover`);
-        res.json({ ok: true, rolled: count });
-    } catch (err) {
-        console.error("[runRollover] Error:", err.message);
-        res.status(500).json({ error: err.message });
-    }
-};
-
-// ============================================================
-// JOB 3: Reset isAlertSent tiap awal bulan — tanggal 1 jam 00:15
-// (digabung ke endpoint /budget-alert, dipanggil via vercel.json terpisah)
-// ============================================================
-exports.runBudgetAlert = async (req, res) => {
-    try {
-        const now = new Date();
-        const month = now.getMonth() + 1;
-        const year = now.getFullYear();
-
-        // Reset isAlertSent kalau ini dipanggil di tanggal 1
-        if (now.getDate() === 1) {
-            await Budget.updateMany({}, { $set: { isAlertSent: false } });
-            console.log("[runBudgetAlert] isAlertSent di-reset untuk bulan baru");
-        }
-
-        // Ambil semua budget bulan ini yang belum dikirim alert
-        const budgets = await Budget.find({
-            month,
-            year,
-            isAlertSent: false,
-        }).populate("category", "name icon");
-
-        let sent = 0;
-        for (const budget of budgets) {
-            if (budget.limit <= 0) continue;
-            const pct = (budget.spent / budget.limit) * 100;
-            if (pct < budget.alertThreshold) continue;
-
-            const user = await User.findById(budget.user);
-            if (!user || !user.notifications?.budgetAlert) continue;
-            if (!user.email) continue;
-
-            const isOver = budget.spent > budget.limit;
-            const subject = isOver
-                ? `🚨 Budget "${budget.category?.name}" Sudah Melebihi Limit!`
-                : `⚠️ Budget "${budget.category?.name}" Hampir Habis (${Math.round(pct)}%)`;
-
-            const html = `
-                <div style="font-family:sans-serif;max-width:480px;margin:auto;background:#f9fafb;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb">
-                    <div style="background:${isOver ? "#ef4444" : "#f59e0b"};padding:24px;text-align:center">
-                        <h2 style="margin:0;color:white;font-size:20px">${isOver ? "🚨 Budget Terlampaui!" : "⚠️ Budget Hampir Habis"}</h2>
-                    </div>
-                    <div style="padding:24px">
-                        <p style="margin:0 0 8px;color:#374151">Halo <strong>${user.name}</strong>,</p>
-                        <p style="color:#6b7280;margin:0 0 20px">
-                            ${isOver
-                    ? `Budget kategori <strong>${budget.category?.name}</strong> kamu sudah <strong>melebihi limit</strong>!`
-                    : `Budget kategori <strong>${budget.category?.name}</strong> kamu sudah mencapai <strong>${Math.round(pct)}%</strong> dari limit.`
-                }
-                        </p>
-                        <table style="width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;border:1px solid #e5e7eb">
-                            <tr style="background:#f3f4f6">
-                                <td style="padding:10px 14px;color:#6b7280;font-size:13px">Kategori</td>
-                                <td style="padding:10px 14px;font-weight:600;color:#111827">${budget.category?.icon || ""} ${budget.category?.name}</td>
-                            </tr>
-                            <tr>
-                                <td style="padding:10px 14px;color:#6b7280;font-size:13px">Limit</td>
-                                <td style="padding:10px 14px;font-weight:600;color:#111827">${formatRupiah(budget.limit)}</td>
-                            </tr>
-                            <tr style="background:#f3f4f6">
-                                <td style="padding:10px 14px;color:#6b7280;font-size:13px">Terpakai</td>
-                                <td style="padding:10px 14px;font-weight:600;color:${isOver ? "#ef4444" : "#f59e0b"}">${formatRupiah(budget.spent)} (${Math.round(pct)}%)</td>
-                            </tr>
-                            <tr>
-                                <td style="padding:10px 14px;color:#6b7280;font-size:13px">Sisa</td>
-                                <td style="padding:10px 14px;font-weight:600;color:${isOver ? "#ef4444" : "#10b981"}">${formatRupiah(Math.max(0, budget.limit - budget.spent))}</td>
-                            </tr>
-                        </table>
-                        <p style="margin:20px 0 0;color:#6b7280;font-size:13px">
-                            ${isOver ? "Pertimbangkan untuk mengurangi pengeluaran di kategori ini." : "Pantau pengeluaran kamu agar tetap dalam anggaran."}
-                        </p>
-                    </div>
-                    <div style="padding:16px 24px;background:#f3f4f6;text-align:center">
-                        <p style="margin:0;color:#9ca3af;font-size:12px">DailyTrack Finance Tracker</p>
-                    </div>
-                </div>
-            `;
-
-            try {
-                await sendEmail({ to: user.email, subject, html });
-                budget.isAlertSent = true;
-                await budget.save();
-                sent++;
-                console.log(`[runBudgetAlert] Email terkirim ke ${user.email} — ${budget.category?.name} ${Math.round(pct)}%`);
-            } catch (emailErr) {
-                console.error(`[runBudgetAlert] Gagal kirim email ke ${user.email}:`, emailErr.message);
-            }
-        }
-
-        res.json({ ok: true, sent });
-    } catch (err) {
-        console.error("[runBudgetAlert] Error:", err.message);
-        res.status(500).json({ error: err.message });
-    }
-};
-
-// ============================================================
-// JOB 4: Goal alert — setiap hari jam 08:00
-// ============================================================
-exports.runGoalAlert = async (req, res) => {
-    try {
-        const goals = await Goal.find({ status: "active" });
-
-        let sent = 0;
-        for (const goal of goals) {
-            const user = await User.findById(goal.user);
-            if (!user || !user.notifications?.goalAlert) continue;
-            if (!user.email) continue;
-
-            const pct = goal.targetAmount > 0
-                ? (goal.currentAmount / goal.targetAmount) * 100
-                : 0;
-
-            const isJustCompleted = goal.currentAmount >= goal.targetAmount;
-
-            let isDueSoon = false;
-            let daysLeft = null;
-            if (goal.deadline) {
-                const now = new Date();
-                const diff = goal.deadline - now;
-                daysLeft = Math.ceil(diff / (1000 * 60 * 60 * 24));
-                isDueSoon = daysLeft > 0 && daysLeft <= 7;
-            }
-
-            if (!isJustCompleted && !isDueSoon) continue;
-
-            let subject, bodyContent;
-
-            if (isJustCompleted) {
-                subject = `🎉 Goal "${goal.name}" Tercapai!`;
-                bodyContent = `
-                    <p style="color:#374151;margin:0 0 8px">Halo <strong>${user.name}</strong>, selamat! 🎊</p>
-                    <p style="color:#6b7280;margin:0 0 20px">Goal <strong>"${goal.name}"</strong> kamu sudah <strong>tercapai</strong>! Kerja keras kamu terbayar.</p>
-                `;
-            } else {
-                subject = `⏰ Goal "${goal.name}" Deadline dalam ${daysLeft} Hari!`;
-                bodyContent = `
-                    <p style="color:#374151;margin:0 0 8px">Halo <strong>${user.name}</strong>,</p>
-                    <p style="color:#6b7280;margin:0 0 20px">Goal <strong>"${goal.name}"</strong> kamu akan berakhir dalam <strong>${daysLeft} hari</strong>. Yuk semangat!</p>
-                `;
-            }
-
-            const html = `
-                <div style="font-family:sans-serif;max-width:480px;margin:auto;background:#f9fafb;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb">
-                    <div style="background:${isJustCompleted ? "#10b981" : "#6366f1"};padding:24px;text-align:center">
-                        <h2 style="margin:0;color:white;font-size:20px">${isJustCompleted ? "🎉 Goal Tercapai!" : "⏰ Deadline Mendekat"}</h2>
-                    </div>
-                    <div style="padding:24px">
-                        ${bodyContent}
-                        <table style="width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;border:1px solid #e5e7eb">
-                            <tr style="background:#f3f4f6">
-                                <td style="padding:10px 14px;color:#6b7280;font-size:13px">Goal</td>
-                                <td style="padding:10px 14px;font-weight:600;color:#111827">${goal.name}</td>
-                            </tr>
-                            <tr>
-                                <td style="padding:10px 14px;color:#6b7280;font-size:13px">Target</td>
-                                <td style="padding:10px 14px;font-weight:600;color:#111827">${formatRupiah(goal.targetAmount)}</td>
-                            </tr>
-                            <tr style="background:#f3f4f6">
-                                <td style="padding:10px 14px;color:#6b7280;font-size:13px">Terkumpul</td>
-                                <td style="padding:10px 14px;font-weight:600;color:#10b981">${formatRupiah(goal.currentAmount)} (${Math.round(pct)}%)</td>
-                            </tr>
-                            ${goal.deadline ? `
-                            <tr>
-                                <td style="padding:10px 14px;color:#6b7280;font-size:13px">Deadline</td>
-                                <td style="padding:10px 14px;font-weight:600;color:#111827">${new Date(goal.deadline).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</td>
-                            </tr>` : ""}
-                        </table>
-                    </div>
-                    <div style="padding:16px 24px;background:#f3f4f6;text-align:center">
-                        <p style="margin:0;color:#9ca3af;font-size:12px">DailyTrack Finance Tracker</p>
-                    </div>
-                </div>
-            `;
-
-            try {
-                await sendEmail({ to: user.email, subject, html });
-                if (isJustCompleted) {
-                    goal.status = "completed";
-                    goal.completedAt = new Date();
-                    await goal.save();
-                }
-                sent++;
-                console.log(`[runGoalAlert] Email terkirim ke ${user.email} — "${goal.name}"`);
-            } catch (emailErr) {
-                console.error(`[runGoalAlert] Gagal kirim email ke ${user.email}:`, emailErr.message);
-            }
-        }
-
-        res.json({ ok: true, sent });
-    } catch (err) {
-        console.error("[runGoalAlert] Error:", err.message);
-        res.status(500).json({ error: err.message });
-    }
-};
-
-// ============================================================
-// JOB 5: Daily reminder — Vercel trigger jam tertentu (UTC)
-// Karena Vercel tidak bisa per-menit, kirim ke semua user
-// yang reminderTime-nya dalam window ±1 menit dari sekarang
-// ============================================================
-exports.runDailyReminder = async (req, res) => {
-    try {
-        const now = new Date();
-        const currentHour = String(now.getUTCHours()).padStart(2, "0");
-        const currentMinute = String(now.getUTCMinutes()).padStart(2, "0");
-        const currentTime = `${currentHour}:${currentMinute}`;
-
-        // Cari user yang reminderTime-nya cocok dengan waktu sekarang (UTC)
-        const users = await User.find({
-            "notifications.dailyReminder": true,
-            "notifications.reminderTime": currentTime,
-            isActive: true,
+        const anyOver = alerts.some((a) => a.over);
+        const subject = anyOver
+            ? `Budget ${alerts.find((a) => a.over).b.category?.name || ""} sudah jebol`
+            : `Budget ${alerts[0].b.category?.name || ""} sudah ${alerts[0].pct}%`;
+        const html = layout({
+            kicker: "Peringatan budget",
+            title: anyOver ? "Ada budget yang jebol" : "Budget hampir habis",
+            intro: `Halo <strong>${esc(user.name)}</strong>, ini kondisi budget bulan ini yang perlu kamu perhatikan.`,
+            rows: alerts.map(({ b, over, pct }) => [
+                b.category?.name || "Kategori",
+                `${rupiah(b.spent)} / ${rupiah(b.effectiveLimit ?? b.limit)} (${pct}%)`,
+                over ? "#c2453b" : "#b06c12",
+            ]),
+            note: "Tips: lihat sisa aman per hari di halaman Budget supaya sisa bulan tetap terkendali.",
+            cta: { label: "Buka Budget", path: "/budgets" },
         });
-
-        let sent = 0;
-        for (const user of users) {
-            if (!user.email) continue;
-
-            const todayStart = new Date(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-            const todayEnd = new Date(todayStart);
-            todayEnd.setDate(todayEnd.getDate() + 1);
-
-            const todayTransactions = await Transaction.find({
-                user: user._id,
-                type: "expense",
-                isDeleted: false,
-                date: { $gte: todayStart, $lt: todayEnd },
-            });
-
-            const totalHariIni = todayTransactions.reduce((s, t) => s + t.amount, 0);
-            const jumlahTransaksi = todayTransactions.length;
-
-            const subject = `📊 Rangkuman Keuangan Hari Ini — ${now.toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" })}`;
-
-            const html = `
-                <div style="font-family:sans-serif;max-width:480px;margin:auto;background:#f9fafb;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb">
-                    <div style="background:linear-gradient(135deg,#4f46e5,#7c3aed);padding:24px;text-align:center">
-                        <h2 style="margin:0;color:white;font-size:20px">📊 Rangkuman Harian</h2>
-                        <p style="margin:8px 0 0;color:rgba(255,255,255,0.8);font-size:14px">${now.toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
-                    </div>
-                    <div style="padding:24px">
-                        <p style="margin:0 0 20px;color:#374151">Halo <strong>${user.name}</strong>! Ini rangkuman keuangan kamu hari ini 👇</p>
-                        <table style="width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;border:1px solid #e5e7eb">
-                            <tr style="background:#f3f4f6">
-                                <td style="padding:12px 16px;color:#6b7280;font-size:13px">Total Pengeluaran Hari Ini</td>
-                                <td style="padding:12px 16px;font-weight:700;color:#ef4444;text-align:right">${formatRupiah(totalHariIni)}</td>
-                            </tr>
-                            <tr>
-                                <td style="padding:12px 16px;color:#6b7280;font-size:13px">Jumlah Transaksi</td>
-                                <td style="padding:12px 16px;font-weight:600;color:#111827;text-align:right">${jumlahTransaksi} transaksi</td>
-                            </tr>
-                        </table>
-                        <p style="margin:20px 0 0;color:#6b7280;font-size:13px;text-align:center">
-                            ${jumlahTransaksi === 0
-                    ? "Belum ada transaksi hari ini. Jangan lupa catat pengeluaranmu! 📝"
-                    : "Tetap semangat menjaga keuangan kamu! 💪"
-                }
-                        </p>
-                    </div>
-                    <div style="padding:16px 24px;background:#f3f4f6;text-align:center">
-                        <p style="margin:0;color:#9ca3af;font-size:12px">DailyTrack Finance Tracker — Notifikasi ini dikirim sesuai preferensi kamu</p>
-                    </div>
-                </div>
-            `;
-
-            try {
-                await sendEmail({ to: user.email, subject, html });
-                sent++;
-                console.log(`[runDailyReminder] Email terkirim ke ${user.email} jam ${currentTime} UTC`);
-            } catch (emailErr) {
-                console.error(`[runDailyReminder] Gagal kirim email ke ${user.email}:`, emailErr.message);
-            }
+        try {
+            await send(user.email, subject, html);
+            sent += 1;
+        } catch (e) {
+            for (const a of alerts) await releaseSent(uid, a.key);
+            log("budgetAlert", `gagal kirim ke ${user.email}: ${e.message}`);
         }
-
-        res.json({ ok: true, sent });
-    } catch (err) {
-        console.error("[runDailyReminder] Error:", err.message);
-        res.status(500).json({ error: err.message });
     }
+    return { users: userIds.length, sent };
+}
+
+// ── Goal: tenggat dekat / tercapai ──────────────────────────────────
+async function runGoalAlertJob(now = new Date()) {
+    const t = wib(now);
+    const in7 = startOfKey(addDays(t.key, 8));
+    const recentDone = new Date(now.getTime() - 2 * DAY_MS);
+    const goals = await Goal.find({
+        $or: [
+            { status: "active", deadline: { $ne: null, $gte: startOfKey(t.key), $lt: in7 } },
+            { status: "completed", completedAt: { $gte: recentDone } },
+        ],
+    }).lean();
+
+    const byUser = new Map();
+    for (const g of goals) {
+        const list = byUser.get(String(g.user)) || [];
+        list.push(g);
+        byUser.set(String(g.user), list);
+    }
+
+    let sent = 0;
+    for (const [uid, list] of byUser) {
+        const user = await User.findById(uid).select("name email notifications isActive").lean();
+        if (!user?.email || user.isActive === false || user.notifications?.goalAlert === false) continue;
+        const items = [];
+        for (const g of list) {
+            if (g.status === "completed") {
+                const key = `goal:${g._id}:done`;
+                if (await claimSent(uid, key)) items.push({ g, key, done: true });
+                continue;
+            }
+            const daysLeft = Math.round((Date.parse(dayKey(g.deadline)) - Date.parse(t.key)) / DAY_MS);
+            const stage = daysLeft <= 1 ? "d1" : "d7";
+            const key = `goal:${g._id}:${stage}:${dayKey(g.deadline)}`;
+            if (await claimSent(uid, key)) items.push({ g, key, daysLeft });
+        }
+        if (!items.length) continue;
+
+        const done = items.filter((i) => i.done);
+        const subject = done.length ? `Selamat! Goal "${done[0].g.name}" tercapai` : `Tenggat goal "${items[0].g.name}" tinggal ${items[0].daysLeft} hari`;
+        const html = layout({
+            kicker: "Goal tabungan",
+            title: done.length ? "Goal tercapai!" : "Tenggat goal mendekat",
+            intro: `Halo <strong>${esc(user.name)}</strong>, ${done.length ? "kerja kerasmu terbayar." : "yuk kejar target sebelum tenggatnya."}`,
+            rows: items.map(({ g, done: d, daysLeft }) => [
+                g.name,
+                d
+                    ? `${rupiah(g.currentAmount)} ✓`
+                    : `${rupiah(g.currentAmount)} / ${rupiah(g.targetAmount)} · ${daysLeft <= 0 ? "hari ini" : `${daysLeft} hari lagi`}`,
+                d ? "#1f8a5b" : "#13221e",
+            ]),
+            cta: { label: "Buka Goals", path: "/goals" },
+        });
+        try {
+            await send(user.email, subject, html);
+            sent += 1;
+        } catch (e) {
+            for (const i of items) await releaseSent(uid, i.key);
+            log("goalAlert", `gagal kirim ke ${user.email}: ${e.message}`);
+        }
+    }
+    return { goals: goals.length, sent };
+}
+
+// ── Pengingat harian ────────────────────────────────────────────────
+// Hanya dikirim kalau pengguna belum mencatat apa pun hari ini (WIB).
+// windowMinutes: kirim ke pengguna yang jam pengingatnya jatuh dalam jendela ini
+// (lokal: 15 menit; Vercel yang hanya jalan sekali sehari: seharian).
+async function streakInfo(userId, todayKey) {
+    const since = startOfKey(addDays(todayKey, -400));
+    const rows = await Transaction.find({ user: userId, isDeleted: false, createdAt: { $gte: since } })
+        .select("createdAt")
+        .lean();
+    const days = new Set(rows.map((r) => dayKey(r.createdAt)));
+    return gami.computeStreak(days, todayKey);
+}
+
+function dueReminderUsers(users, now, windowMinutes) {
+    const t = wib(now);
+    return users.filter((u) => {
+        const m = toMinutes(u.notifications?.reminderTime || "20:00");
+        return m !== null && m <= t.minutes && t.minutes - m <= windowMinutes;
+    });
+}
+
+async function runDailyReminderJob(now = new Date(), { windowMinutes = 15 } = {}) {
+    const t = wib(now);
+    const users = await User.find({ "notifications.dailyReminder": { $ne: false }, isActive: { $ne: false }, email: { $ne: null } })
+        .select("name email notifications")
+        .lean();
+    const due = dueReminderUsers(users, now, windowMinutes);
+    let sent = 0;
+    let skippedLogged = 0;
+    for (const user of due) {
+        const loggedToday = await Transaction.exists({
+            user: user._id,
+            isDeleted: false,
+            createdAt: { $gte: startOfKey(t.key) },
+        });
+        if (loggedToday) {
+            skippedLogged += 1;
+            continue;
+        }
+        const key = `daily:${t.key}`;
+        if (!(await claimSent(user._id, key))) continue;
+
+        try {
+            const streak = await streakInfo(user._id, t.key);
+            let budgets = [];
+            try {
+                budgets = (await budgetStatusFor(user._id, t)).filter(
+                    (b) => b.spent > (b.effectiveLimit ?? b.limit) || (b.percentage ?? 0) >= (b.alertThreshold || 80),
+                );
+            } catch {
+                budgets = [];
+            }
+            const subject =
+                streak.current > 0
+                    ? `Streak ${streak.current} hari-mu menunggu catatan hari ini`
+                    : "Belum ada catatan hari ini";
+            const rows = [];
+            if (streak.current > 0) rows.push(["Streak sekarang", `${streak.current} hari`, "#e0672b"]);
+            if (streak.current > 0)
+                rows.push([
+                    "Perisai streak",
+                    streak.shields > 0 ? `${streak.shields} siap menyelamatkan` : "Kosong — streak bisa putus",
+                    streak.shields > 0 ? "#1f8a5b" : "#c2453b",
+                ]);
+            for (const b of budgets.slice(0, 3)) {
+                rows.push([`Budget ${b.category?.name || ""}`, `${b.percentage}% terpakai`, b.spent > (b.effectiveLimit ?? b.limit) ? "#c2453b" : "#b06c12"]);
+            }
+            const html = layout({
+                kicker: "Pengingat harian",
+                title: streak.current > 0 ? "Jaga streak-mu tetap menyala" : "Yuk catat pengeluaran hari ini",
+                intro: `Halo <strong>${esc(user.name)}</strong>, kamu belum mencatat transaksi hari ini. Cukup satu kalimat, misalnya <em>"kopi 18rb gopay"</em>, lewat Catat cepat (Ctrl+K).`,
+                rows,
+                note:
+                    streak.current > 0 && streak.shields === 0
+                        ? "Tanpa perisai, streak akan kembali ke 0 kalau hari ini terlewat."
+                        : null,
+                cta: { label: "Catat sekarang", path: "/" },
+            });
+            await send(user.email, subject, html);
+            sent += 1;
+        } catch (e) {
+            await releaseSent(user._id, key);
+            log("dailyReminder", `gagal kirim ke ${user.email}: ${e.message}`);
+        }
+    }
+    return { candidates: due.length, sent, skippedLogged };
+}
+
+// ── Pembungkus Express untuk /api/cron/* (Vercel) ───────────────────
+const wrap = (name, job, opts) => async (req, res) => {
+    try {
+        const result = await job(new Date(), opts);
+        res.json({ ok: true, job: name, ...result });
+    } catch (err) {
+        console.error(`[${name}] Error:`, err.message);
+        res.status(500).json({ ok: false, error: err.message });
+    }
+};
+
+module.exports = {
+    runRecurringJob,
+    runRolloverJob,
+    runBudgetAlertJob,
+    runGoalAlertJob,
+    runDailyReminderJob,
+    emailConfigured,
+    runRecurring: wrap("recurring", runRecurringJob),
+    runRollover: wrap("rollover", runRolloverJob),
+    runBudgetAlert: wrap("budgetAlert", runBudgetAlertJob),
+    runGoalAlert: wrap("goalAlert", runGoalAlertJob),
+    // Vercel memanggil sekali sehari → kirim ke semua yang jam pengingatnya sudah lewat hari ini
+    runDailyReminder: wrap("dailyReminder", runDailyReminderJob, { windowMinutes: 24 * 60 }),
+    _internal: { advance, dueReminderUsers },
 };

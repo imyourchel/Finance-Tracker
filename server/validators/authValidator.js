@@ -10,7 +10,7 @@ const registerRules = [
         .trim()
         .notEmpty().withMessage("Email wajib diisi")
         .isEmail().withMessage("Format email tidak valid")
-        .normalizeEmail(),
+        .toLowerCase(),
 
     body("username")
         .trim()
@@ -28,11 +28,33 @@ const loginRules = [
     body("password").notEmpty().withMessage("Password wajib diisi"),
 ];
 
+// currentPassword boleh kosong untuk akun Google yang belum punya password —
+// pengecekan wajib/tidaknya dilakukan di controller.
 const changePasswordRules = [
-    body("oldPassword").notEmpty().withMessage("Password lama wajib diisi"),
+    body("currentPassword").optional({ values: "falsy" }).isString(),
     body("newPassword")
         .notEmpty().withMessage("Password baru wajib diisi")
         .isLength({ min: 6 }).withMessage("Password baru minimal 6 karakter"),
 ];
 
-module.exports = { registerRules, loginRules, changePasswordRules };
+const forgotPasswordRules = [
+    body("email")
+        .trim()
+        .notEmpty().withMessage("Email wajib diisi")
+        .isEmail().withMessage("Format email tidak valid")
+        .toLowerCase(),
+];
+
+const resetPasswordRules = [
+    body("newPassword")
+        .notEmpty().withMessage("Password baru wajib diisi")
+        .isLength({ min: 6 }).withMessage("Password baru minimal 6 karakter"),
+];
+
+module.exports = {
+    registerRules,
+    loginRules,
+    changePasswordRules,
+    forgotPasswordRules,
+    resetPasswordRules,
+};

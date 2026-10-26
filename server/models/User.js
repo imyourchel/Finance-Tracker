@@ -22,10 +22,23 @@ const userSchema = new mongoose.Schema(
             lowercase: true,
             trim: true,
         },
+        // Password boleh kosong untuk akun yang daftar lewat Google
         password: {
             type: String,
-            required: true,
+            required: function () {
+                return !this.googleId;
+            },
             minlength: 6,
+        },
+        googleId: {
+            type: String,
+            unique: true,
+            sparse: true,
+        },
+        authProvider: {
+            type: String,
+            enum: ["local", "google"],
+            default: "local",
         },
         avatar: {
             type: String,
@@ -44,6 +57,13 @@ const userSchema = new mongoose.Schema(
         monthlyBudget: {
             type: Number,
             default: 0,
+        },
+        // Tanggal gajian (1–31). Dipakai untuk "sisa aman sampai gajian"
+        payday: {
+            type: Number,
+            min: 1,
+            max: 31,
+            default: null,
         },
 
         // === PREFERENSI APP ===

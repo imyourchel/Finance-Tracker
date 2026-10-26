@@ -11,19 +11,19 @@ export default function ScrollToTop() {
             // smooth scroll for better UX
             try {
                 main.scrollTo({ top: 0, left: 0, behavior: "smooth" });
-            } catch (e) {
+            } catch {
                 main.scrollTop = 0;
             }
             // also ensure window fallback
             try {
                 window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
-            } catch (e) {
+            } catch {
                 // noop
             }
         } else {
             try {
                 window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
-            } catch (e) {
+            } catch {
                 // fallback
                 window.scrollTo(0, 0);
             }

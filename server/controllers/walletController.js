@@ -34,10 +34,31 @@ const getWalletById = async (req, res) => {
     }
 };
 
+// Validasi & hitung nilai wallet emas (berat x harga beli per gram)
+const parseGold = (goldWeight, goldBuyPrice) => {
+    const weight = Number(goldWeight);
+    const price = Number(goldBuyPrice);
+    if (!Number.isFinite(weight) || weight <= 0)
+        return { error: "Berat emas harus lebih dari 0 gram" };
+    if (!Number.isFinite(price) || price <= 0)
+        return { error: "Harga beli per gram harus lebih dari 0" };
+    return { weight, price, value: Math.round(weight * price) };
+};
+
 // POST buat wallet baru
 const createWallet = async (req, res) => {
     try {
-        const { name, type, balance, icon, color, note } = req.body;
+        const { name, type, icon, color, note, goldWeight, goldBuyPrice } =
+            req.body;
+        let { balance } = req.body;
+
+        let gold = null;
+        if (type === "gold") {
+            gold = parseGold(goldWeight, goldBuyPrice);
+            if (gold.error)
+                return res.status(400).json({ message: gold.error });
+            balance = gold.value;
+        }
 
         // Cek apakah ini wallet pertama user (kalau iya, jadikan default)
         const count = await Wallet.countDocuments({ user: req.user._id });
@@ -52,6 +73,8 @@ const createWallet = async (req, res) => {
             color: color || "#4f46e5",
             isDefault: count === 0, // default kalau ini wallet pertama
             note: note || "",
+            goldWeight: gold ? gold.weight : null,
+            goldBuyPrice: gold ? gold.price : null,
         });
 
         res.status(201).json(wallet);
@@ -79,6 +102,8 @@ const updateWallet = async (req, res) => {
             isDefault,
             balance,
             initialBalance,
+            goldWeight,
+            goldBuyPrice,
         } = req.body;
 
         if (name) wallet.name = name;
@@ -89,6 +114,24 @@ const updateWallet = async (req, res) => {
         if (balance !== undefined) wallet.balance = balance;
         if (initialBalance !== undefined)
             wallet.initialBalance = initialBalance;
+
+        // Wallet emas: saldo selalu dihitung ulang dari berat x harga beli
+        if (
+            wallet.type === "gold" &&
+            (goldWeight !== undefined || goldBuyPrice !== undefined)
+        ) {
+            const gold = parseGold(
+                goldWeight ?? wallet.goldWeight,
+                goldBuyPrice ?? wallet.goldBuyPrice,
+            );
+            if (gold.error)
+                return res.status(400).json({ message: gold.error });
+            const diff = gold.value - wallet.balance;
+            wallet.goldWeight = gold.weight;
+            wallet.goldBuyPrice = gold.price;
+            wallet.balance = gold.value;
+            wallet.initialBalance = (wallet.initialBalance || 0) + diff;
+        }
 
         // Kalau jadikan default, hapus default dari wallet lain
         if (isDefault) {

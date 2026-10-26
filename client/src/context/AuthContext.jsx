@@ -1,13 +1,17 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useState, useEffect } from "react";
-import { loginAPI, registerAPI, getProfileAPI } from "../services/api";
+import {
+    loginAPI,
+    registerAPI,
+    getProfileAPI,
+    googleLoginAPI,
+} from "../services/api";
 
 const AuthContext = createContext();
 
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
-    
 
     // Saat pertama buka app — cek token yang sudah tersimpan
     useEffect(() => {
@@ -54,6 +58,15 @@ export function AuthProvider({ children }) {
         setLoading(false);
     };
 
+    // Login / daftar via Google. Mengembalikan true bila akun baru dibuat.
+    const loginWithGoogle = async (accessToken) => {
+        const res = await googleLoginAPI({ accessToken });
+        localStorage.setItem("token", res.data.token);
+        setUser(res.data);
+        setLoading(false);
+        return Boolean(res.data.isNew);
+    };
+
     const logout = () => {
         localStorage.removeItem("token");
         setUser(null);
@@ -63,7 +76,15 @@ export function AuthProvider({ children }) {
 
     return (
         <AuthContext.Provider
-            value={{ user, loading, login, register, logout, updateUser }}
+            value={{
+                user,
+                loading,
+                login,
+                register,
+                loginWithGoogle,
+                logout,
+                updateUser,
+            }}
         >
             {children}
         </AuthContext.Provider>

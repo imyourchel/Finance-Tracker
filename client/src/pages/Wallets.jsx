@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
+import { confirmDialog } from "../utils/confirm";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Card from "../components/ui/Card";
 import PageHeader from "../components/Layout/PageHeader";
-import Modal from "../components/ui/Modal";
+import FormScreen from "../components/ui/FormScreen";
 import { useFinance } from "../context/FinanceContext";
 import {
     createWalletAPI,
@@ -11,6 +12,9 @@ import {
     archiveWalletAPI,
 } from "../services/api";
 import DropdownMenu from "../components/ui/DropdownMenu";
+import { FiArrowRight } from "react-icons/fi";
+import "../styles/wallet.css";
+import ColorSwatches from "../components/ui/ColorSwatches";
 import {
     formatNumberInput,
     formatRupiah,
@@ -22,11 +26,21 @@ const typeLabel = {
     bank: "Bank",
     "e-wallet": "E-Wallet",
     investment: "Investasi",
+    gold: "Emas",
     other: "Lainnya",
 };
 
+const GOLD_COLOR = "#b8923f";
+
+// "12,5" atau "12.5" → 12.5 (berat emas boleh desimal)
+const parseWeight = (v) => Number(String(v || "").replace(",", "."));
+const cleanWeightInput = (v) =>
+    v.replace(/[^0-9.,]/g, "").replace(/([.,].*)[.,]/g, "$1").slice(0, 8);
+const formatWeight = (n) =>
+    Number(n || 0).toLocaleString("id-ID", { maximumFractionDigits: 3 });
+
 function getTextColorForBg(hex) {
-    const safeHex = (hex || "#4f46e5").replace("#", "");
+    const safeHex = (hex || "#1e6e55").replace("#", "");
     const normalized =
         safeHex.length === 3
             ? safeHex
@@ -39,7 +53,7 @@ function getTextColorForBg(hex) {
     const b = Number.parseInt(normalized.slice(4, 6), 16);
     const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
 
-    return luminance > 0.62 ? "#1e3a8a" : "#ffffff";
+    return luminance > 0.62 ? "#13221e" : "#ffffff";
 }
 
 export default function Wallets() {
@@ -52,13 +66,20 @@ export default function Wallets() {
         name: "",
         type: "bank",
         balance: "0",
-        color: "#4f46e5",
+        color: "#1e6e55",
+        goldWeight: "",
+        goldBuyPrice: "",
     });
+    const isGoldForm = form.type === "gold";
+    const goldValue =
+        parseWeight(form.goldWeight) * parseNumberInput(form.goldBuyPrice || "0");
     const [error, setError] = useState("");
     const [editModal, setEditModal] = useState(false);
     const [editingWallet, setEditingWallet] = useState(null);
-    const [editColor, setEditColor] = useState("#4f46e5");
+    const [editColor, setEditColor] = useState("#1e6e55");
     const [editBalance, setEditBalance] = useState("0");
+    const [editGoldWeight, setEditGoldWeight] = useState("");
+    const [editGoldPrice, setEditGoldPrice] = useState("");
     const [editDefault, setEditDefault] = useState(false);
     const [editSaving, setEditSaving] = useState(false);
     const [editError, setEditError] = useState("");
@@ -100,7 +121,12 @@ export default function Wallets() {
             setError("Nama wallet wajib diisi");
             return;
         }
-        if (Number.isNaN(parsedBalance) || parsedBalance < 0) {
+        if (isGoldForm) {
+            if (!(parseWeight(form.goldWeight) > 0))
+                return setError("Isi berat emas dalam gram, contoh: 5 atau 2,5");
+            if (!(parseNumberInput(form.goldBuyPrice || "0") > 0))
+                return setError("Isi harga beli emas per gram");
+        } else if (Number.isNaN(parsedBalance) || parsedBalance < 0) {
             setError("Saldo awal harus angka dan tidak boleh negatif");
             return;
         }
@@ -111,17 +137,30 @@ export default function Wallets() {
             await createWalletAPI({
                 name: form.name.trim(),
                 type: form.type,
-                balance: parsedBalance,
-                initialBalance: parsedBalance,
+                balance: isGoldForm ? Math.round(goldValue) : parsedBalance,
+                initialBalance: isGoldForm
+                    ? Math.round(goldValue)
+                    : parsedBalance,
                 color: form.color,
-                icon: form.type === "e-wallet" ? "smartphone" : "wallet",
+                icon:
+                    form.type === "e-wallet"
+                        ? "smartphone"
+                        : isGoldForm
+                          ? "gold"
+                          : "wallet",
+                ...(isGoldForm && {
+                    goldWeight: parseWeight(form.goldWeight),
+                    goldBuyPrice: parseNumberInput(form.goldBuyPrice),
+                }),
             });
             await refresh();
             setForm({
                 name: "",
                 type: "bank",
                 balance: "0",
-                color: "#4f46e5",
+                color: "#1e6e55",
+                goldWeight: "",
+                goldBuyPrice: "",
             });
             setShowModal(false);
         } catch (err) {
@@ -130,6 +169,573 @@ export default function Wallets() {
             setSaving(false);
         }
     };
+
+    if (showModal) {
+        return (
+        <FormScreen backLabel="Wallet" title="Tambah wallet"
+            subtitle="Tambahkan rekening bank, e-wallet, uang tunai, atau emas." onClose={handleCloseModal}>
+            <form onSubmit={handleSubmit}>
+                {error && <div style={errorBox}>⚠️ {error}</div>}
+
+                <div style={modalGridTwo}>
+                    <Field label="Nama Wallet">
+                        <input
+                            value={form.name}
+                            onChange={(e) =>
+                                setForm({
+                                    ...form,
+                                    name: e.target.value,
+                                })
+                            }
+                            style={inputStyle}
+                            placeholder={
+                                isGoldForm
+                                    ? "Antam, Pegadaian, Tabungan Emas"
+                                    : "BCA, Gopay, OVO, Cash"
+                            }
+                            autoFocus
+                            required
+                        />
+                    </Field>
+                    <Field label="Tipe Wallet">
+                        <DropdownMenu
+                            label=""
+                            value={form.type}
+                            options={Object.keys(typeLabel).map(
+                                (k) => ({
+                                    value: k,
+                                    label: typeLabel[k],
+                                }),
+                            )}
+                            onChange={(v) =>
+                                setForm({
+                                    ...form,
+                                    type: v,
+                                    color:
+                                        v === "gold"
+                                            ? GOLD_COLOR
+                                            : form.color === GOLD_COLOR
+                                              ? "#1e6e55"
+                                              : form.color,
+                                })
+                            }
+                        />
+                    </Field>
+                </div>
+
+                {isGoldForm ? (
+                    <div style={{ marginBottom: "14px" }}>
+                        <div style={modalGridTwo}>
+                            <Field label="Berat emas">
+                                <div className="unit-input">
+                                    <input
+                                        type="text"
+                                        value={form.goldWeight}
+                                        onChange={(e) =>
+                                            setForm({
+                                                ...form,
+                                                goldWeight:
+                                                    cleanWeightInput(
+                                                        e.target.value,
+                                                    ),
+                                            })
+                                        }
+                                        style={inputStyle}
+                                        placeholder="contoh: 5 atau 2,5"
+                                        inputMode="decimal"
+                                        required
+                                    />
+                                    <span>gram</span>
+                                </div>
+                            </Field>
+                            <Field label="Harga beli per gram">
+                                <div className="money-input">
+                                    <input
+                                        type="text"
+                                        value={form.goldBuyPrice}
+                                        onChange={(e) =>
+                                            setForm({
+                                                ...form,
+                                                goldBuyPrice:
+                                                    formatNumberInput(
+                                                        e.target.value,
+                                                    ),
+                                            })
+                                        }
+                                        style={inputStyle}
+                                        placeholder="1.350.000"
+                                        inputMode="numeric"
+                                        required
+                                    />
+                                </div>
+                            </Field>
+                        </div>
+                        <div className="gold-summary">
+                            <span>Nilai emas (harga beli)</span>
+                            <strong>
+                                {goldValue > 0
+                                    ? formatRupiah(Math.round(goldValue))
+                                    : "Rp 0"}
+                            </strong>
+                        </div>
+                    </div>
+                ) : (
+                <div style={{ marginBottom: "14px" }}>
+                    <Field label="Saldo Awal">
+                        <div className="money-input">
+                            <input
+                                type="text"
+                                value={form.balance}
+                                onChange={(e) =>
+                                    setForm({
+                                        ...form,
+                                        balance: formatNumberInput(
+                                            e.target.value,
+                                        ),
+                                    })
+                                }
+                                style={inputStyle}
+                                placeholder="0"
+                                inputMode="numeric"
+                                required
+                            />
+                        </div>
+                    </Field>
+                </div>
+                )}
+
+                <div style={{ marginBottom: "22px" }}>
+                    <Field label="Warna kartu">
+                        <ColorSwatches
+                            value={form.color}
+                            onChange={(c) =>
+                                setForm({ ...form, color: c })
+                            }
+                        />
+                    </Field>
+                </div>
+
+                <div style={modalActions}>
+                    <button
+                        type="button"
+                        onClick={handleCloseModal}
+                        style={secondaryBtn}
+                    >
+                        Batal
+                    </button>
+                    <button
+                        type="submit"
+                        disabled={saving}
+                        aria-busy={saving}
+                        style={{
+                            ...actionBtn,
+                            minWidth: "140px",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "8px",
+                            opacity: saving ? 0.85 : 1,
+                        }}
+                    >
+                        {saving && (
+                            <span className="btn-spinner" aria-hidden />
+                        )}
+                        {saving ? "Menyimpan..." : "Buat Wallet"}
+                    </button>
+                </div>
+            </form>
+        </FormScreen>
+        );
+    }
+
+    if (editModal) {
+        return (
+        <FormScreen backLabel="Wallet"
+            title={`Edit wallet ${editingWallet?.name || ""}`}
+            onClose={() => setEditModal(false)}
+        >
+            {editError && <div style={errorBox}>⚠️ {editError}</div>}
+            <form
+                onSubmit={async (e) => {
+                    e.preventDefault();
+                    setEditError("");
+                    const isGoldEdit = editingWallet?.type === "gold";
+                    const parsed = parseNumberInput(editBalance);
+                    if (isGoldEdit) {
+                        if (!(parseWeight(editGoldWeight) > 0))
+                            return setEditError(
+                                "Isi berat emas dalam gram",
+                            );
+                        if (!(parseNumberInput(editGoldPrice || "0") > 0))
+                            return setEditError(
+                                "Isi harga beli emas per gram",
+                            );
+                    } else if (Number.isNaN(parsed) || parsed < 0) {
+                        return setEditError(
+                            "Saldo harus angka dan >= 0",
+                        );
+                    }
+                    // Check if trying to remove default status when it's the only default
+                    if (
+                        editingWallet.isDefault &&
+                        !editDefault &&
+                        wallets.filter((w) => w.isDefault).length === 1
+                    ) {
+                        return setEditError(
+                            "Minimal satu wallet harus default.",
+                        );
+                    }
+                    const balanceDelta = isGoldEdit
+                        ? 0
+                        : parsed - (editingWallet?.balance || 0);
+                    const okEdit = await confirmDialog({
+                        title: `Simpan perubahan ${editingWallet?.name}?`,
+                        message:
+                            balanceDelta !== 0
+                                ? `Saldo berubah ${balanceDelta > 0 ? "+" : "−"}${formatRupiah(Math.abs(balanceDelta))}. Selisihnya dicatat sebagai transaksi "Penyesuaian saldo".`
+                                : "Perubahan warna, status default, atau data emas akan disimpan.",
+                        confirmLabel: "Simpan",
+                        danger: false,
+                    });
+                    if (!okEdit) return;
+                    setEditSaving(true);
+                    window.scrollTo(0, 0);
+                    try {
+                        // prepare update payload
+                        const updatePayload = {};
+                        if (editColor !== editingWallet.color) {
+                            updatePayload.color = editColor;
+                        }
+                        if (editDefault !== editingWallet.isDefault) {
+                            updatePayload.isDefault = editDefault;
+                        }
+                        if (isGoldEdit) {
+                            // saldo emas dihitung ulang di server
+                            updatePayload.goldWeight =
+                                parseWeight(editGoldWeight);
+                            updatePayload.goldBuyPrice =
+                                parseNumberInput(editGoldPrice);
+                        }
+                        if (Object.keys(updatePayload).length > 0) {
+                            await updateWalletAPI(
+                                editingWallet._id,
+                                updatePayload,
+                            );
+                        }
+                        // handle balance difference by creating transaction
+                        const delta = isGoldEdit
+                            ? 0
+                            : parsed - (editingWallet?.balance || 0);
+                        if (delta !== 0) {
+                            const t = {
+                                walletId: editingWallet._id,
+                                type: delta > 0 ? "income" : "expense",
+                                amount: Math.abs(delta),
+                                description: "Penyesuaian saldo",
+                            };
+                            await createTransactionAPI(t);
+                        }
+                        await refresh();
+                        setEditModal(false);
+                    } catch (err) {
+                        setEditError(
+                            err.response?.data?.message ||
+                                "Gagal menyimpan perubahan",
+                        );
+                    } finally {
+                        setEditSaving(false);
+                    }
+                }}
+            >
+                <div style={{ display: "grid", gap: "12px" }}>
+                    <Field label="Warna">
+                        <ColorSwatches
+                            value={editColor}
+                            onChange={setEditColor}
+                        />
+                    </Field>
+                    {editingWallet?.type === "gold" ? (
+                        <>
+                            <div style={modalGridTwo}>
+                                <Field label="Berat emas">
+                                    <div className="unit-input">
+                                        <input
+                                            type="text"
+                                            value={editGoldWeight}
+                                            onChange={(e) =>
+                                                setEditGoldWeight(
+                                                    cleanWeightInput(
+                                                        e.target.value,
+                                                    ),
+                                                )
+                                            }
+                                            style={inputStyle}
+                                            inputMode="decimal"
+                                        />
+                                        <span>gram</span>
+                                    </div>
+                                </Field>
+                                <Field label="Harga beli per gram">
+                                    <div className="money-input">
+                                        <input
+                                            type="text"
+                                            value={editGoldPrice}
+                                            onChange={(e) =>
+                                                setEditGoldPrice(
+                                                    formatNumberInput(
+                                                        e.target.value,
+                                                    ),
+                                                )
+                                            }
+                                            style={inputStyle}
+                                            inputMode="numeric"
+                                        />
+                                    </div>
+                                </Field>
+                            </div>
+                            <div className="gold-summary">
+                                <span>Nilai emas (harga beli)</span>
+                                <strong>
+                                    {formatRupiah(
+                                        Math.round(
+                                            parseWeight(editGoldWeight) *
+                                                parseNumberInput(
+                                                    editGoldPrice || "0",
+                                                ),
+                                        ) || 0,
+                                    )}
+                                </strong>
+                            </div>
+                        </>
+                    ) : (
+                    <Field label="Saldo Saat Ini">
+                        <input
+                            type="text"
+                            value={editBalance}
+                            onChange={(e) =>
+                                setEditBalance(
+                                    formatNumberInput(e.target.value),
+                                )
+                            }
+                            style={inputStyle}
+                            inputMode="numeric"
+                        />
+                    </Field>
+                    )}
+                    <div
+                        style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                        }}
+                    >
+                        <input
+                            type="checkbox"
+                            id="editDefaultCheckbox"
+                            checked={editDefault}
+                            onChange={(e) =>
+                                setEditDefault(e.target.checked)
+                            }
+                            style={{
+                                cursor: "pointer",
+                                width: "16px",
+                                height: "16px",
+                            }}
+                        />
+                        <label
+                            htmlFor="editDefaultCheckbox"
+                            style={{
+                                fontSize: "14px",
+                                color: "var(--app-text-strong)",
+                                cursor: "pointer",
+                            }}
+                        >
+                            Jadikan Wallet Default
+                        </label>
+                    </div>
+                    <div
+                        style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: "10px",
+                            alignItems: "center",
+                        }}
+                    >
+                        <div>
+                            <button
+                                type="button"
+                                onClick={() => setEditModal(false)}
+                                style={secondaryBtn}
+                            >
+                                Batal
+                            </button>
+                        </div>
+
+                        <div
+                            style={{
+                                display: "flex",
+                                gap: "10px",
+                                alignItems: "center",
+                            }}
+                        >
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    setShowDeleteConfirm((s) => !s)
+                                }
+                                style={{
+                                    padding: "10px 12px",
+                                    borderRadius: "10px",
+                                    border: "1px solid rgba(239,68,68,0.28)",
+                                    backgroundColor:
+                                        "rgba(239,68,68,0.08)",
+                                    color: "#ef4444",
+                                    cursor: "pointer",
+                                    fontWeight: 700,
+                                }}
+                            >
+                                Hapus
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={editSaving}
+                                aria-busy={editSaving}
+                                style={{
+                                    ...actionBtn,
+                                    minWidth: "140px",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    gap: "8px",
+                                    opacity: editSaving ? 0.85 : 1,
+                                }}
+                            >
+                                {editSaving && (
+                                    <span
+                                        className="btn-spinner"
+                                        aria-hidden
+                                    />
+                                )}
+                                {editSaving
+                                    ? "Menyimpan..."
+                                    : "Simpan Perubahan"}
+                            </button>
+                        </div>
+                    </div>
+
+                    {showDeleteConfirm && (
+                        <div
+                            style={{
+                                marginTop: "14px",
+                                borderTop:
+                                    "1px solid var(--app-border)",
+                                paddingTop: "12px",
+                            }}
+                        >
+                            <div
+                                style={{
+                                    marginBottom: "8px",
+                                    color: "var(--app-text-strong)",
+                                    fontWeight: 700,
+                                }}
+                            >
+                                Konfirmasi Hapus
+                            </div>
+                            <div
+                                style={{
+                                    marginBottom: "8px",
+                                    color: "var(--app-muted)",
+                                }}
+                            >
+                                Ketik nama wallet{" "}
+                                <strong>{editingWallet?.name}</strong>{" "}
+                                untuk menghapus.
+                            </div>
+                            {deleteError && (
+                                <div
+                                    style={{
+                                        color: "#ef4444",
+                                        marginBottom: "8px",
+                                    }}
+                                >
+                                    {deleteError}
+                                </div>
+                            )}
+                            <div
+                                style={{
+                                    display: "flex",
+                                    gap: "8px",
+                                    alignItems: "center",
+                                }}
+                            >
+                                <input
+                                    type="text"
+                                    value={deleteInput}
+                                    onChange={(e) =>
+                                        setDeleteInput(e.target.value)
+                                    }
+                                    placeholder={
+                                        editingWallet?.name || ""
+                                    }
+                                    style={{ ...inputStyle }}
+                                />
+                                <button
+                                    type="button"
+                                    disabled={
+                                        deleteLoading ||
+                                        deleteInput !==
+                                            editingWallet?.name
+                                    }
+                                    onClick={async () => {
+                                        setDeleteError("");
+                                        if (
+                                            deleteInput !==
+                                            editingWallet?.name
+                                        )
+                                            return setDeleteError(
+                                                "Nama tidak cocok",
+                                            );
+                                        setDeleteLoading(true);
+                                        try {
+                                            await archiveWalletAPI(
+                                                editingWallet._id,
+                                            );
+                                            await refresh();
+                                            setEditModal(false);
+                                        } catch (err) {
+                                            setDeleteError(
+                                                err.response?.data
+                                                    ?.message ||
+                                                    "Gagal menghapus wallet",
+                                            );
+                                        } finally {
+                                            setDeleteLoading(false);
+                                        }
+                                    }}
+                                    style={{
+                                        padding: "10px 12px",
+                                        borderRadius: "10px",
+                                        border: "none",
+                                        backgroundColor: "#ef4444",
+                                        color: "white",
+                                        cursor: deleteLoading
+                                            ? "not-allowed"
+                                            : "pointer",
+                                        fontWeight: 700,
+                                    }}
+                                >
+                                    {deleteLoading
+                                        ? "Menghapus..."
+                                        : "Konfirmasi Hapus"}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </form>
+        </FormScreen>
+        );
+    }
 
     return (
         <div
@@ -146,7 +752,7 @@ export default function Wallets() {
                 subtitle="Lihat semua dompet yang kamu miliki beserta saldo masing-masing"
                 action={
                     <button onClick={handleOpenModal} style={actionBtn}>
-                        + Add Wallet
+                        + Tambah Wallet
                     </button>
                 }
             />
@@ -205,6 +811,7 @@ export default function Wallets() {
             )}
 
             <div
+                className="wallets-summary"
                 style={{
                     display: "grid",
                     gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
@@ -244,7 +851,7 @@ export default function Wallets() {
                     <p style={emptyStyle}>Memuat wallet...</p>
                 ) : wallets.length === 0 ? (
                     <p style={emptyStyle}>
-                        Belum ada wallet. Klik Add Wallet untuk menambah
+                        Belum ada wallet. Klik Tambah Wallet untuk menambah
                         rekening pertama.
                     </p>
                 ) : (
@@ -257,20 +864,33 @@ export default function Wallets() {
                         }}
                     >
                         {wallets.map((wallet) => {
-                            const baseColor = wallet.color || "#4f46e5";
+                            const baseColor = wallet.color || "#1e6e55";
                             const textColor = getTextColorForBg(baseColor);
                             const mutedTextColor =
-                                textColor === "#1e3a8a"
+                                textColor === "#13221e"
                                     ? "rgba(17, 24, 39, 0.72)"
                                     : "rgba(255, 255, 255, 0.82)";
                             const chipBgColor =
-                                textColor === "#1e3a8a"
+                                textColor === "#13221e"
                                     ? "rgba(17, 24, 39, 0.12)"
                                     : "rgba(255, 255, 255, 0.18)";
 
+                            const openDetail = () => navigate(`/wallets/${wallet._id}`);
                             return (
                                 <div
                                     key={wallet._id}
+                                    className="wallet-card-link"
+                                    role="link"
+                                    tabIndex={0}
+                                    aria-label={`Lihat histori ${wallet.name}`}
+                                    onClick={openDetail}
+                                    onKeyDown={(e) => {
+                                        if (e.target !== e.currentTarget) return;
+                                        if (e.key === "Enter" || e.key === " ") {
+                                            e.preventDefault();
+                                            openDetail();
+                                        }
+                                    }}
                                     style={{
                                         borderRadius: "16px",
                                         padding: "18px",
@@ -334,10 +954,11 @@ export default function Wallets() {
 
                                         <button
                                             type="button"
-                                            onClick={() => {
+                                            onClick={(e) => {
+                                                e.stopPropagation();
                                                 setEditingWallet(wallet);
                                                 setEditColor(
-                                                    wallet.color || "#4f46e5",
+                                                    wallet.color || "#1e6e55",
                                                 );
                                                 setEditBalance(
                                                     formatNumberInput(
@@ -348,6 +969,22 @@ export default function Wallets() {
                                                 );
                                                 setEditDefault(
                                                     wallet.isDefault || false,
+                                                );
+                                                setEditGoldWeight(
+                                                    wallet.goldWeight
+                                                        ? String(
+                                                              wallet.goldWeight,
+                                                          ).replace(".", ",")
+                                                        : "",
+                                                );
+                                                setEditGoldPrice(
+                                                    wallet.goldBuyPrice
+                                                        ? formatNumberInput(
+                                                              String(
+                                                                  wallet.goldBuyPrice,
+                                                              ),
+                                                          )
+                                                        : "",
                                                 );
                                                 setEditError("");
                                                 setEditModal(true);
@@ -385,8 +1022,73 @@ export default function Wallets() {
                                     >
                                         {formatRupiah(wallet.balance || 0)}
                                     </div>
+                                    {wallet.type === "gold" &&
+                                        wallet.goldWeight > 0 && (
+                                            <div
+                                                style={{
+                                                    marginTop: "6px",
+                                                    fontSize: "13px",
+                                                    color: mutedTextColor,
+                                                }}
+                                            >
+                                                {formatWeight(wallet.goldWeight)}{" "}
+                                                gram · beli{" "}
+                                                {formatRupiah(
+                                                    wallet.goldBuyPrice || 0,
+                                                )}
+                                                /gram
+                                            </div>
+                                        )}
+                                    {wallet.type === "gold" && (
+                                        <div className="gold-actions" onClick={(e) => e.stopPropagation()}>
+                                            <button
+                                                type="button"
+                                                style={{ backgroundColor: chipBgColor, color: textColor }}
+                                                onClick={() =>
+                                                    navigate("/transactions/new", {
+                                                        state: {
+                                                            preset: {
+                                                                type: "transfer",
+                                                                transferTo: wallet._id,
+                                                                walletId:
+                                                                    wallets.find((w) => w.type !== "gold" && w.isDefault)?._id ||
+                                                                    wallets.find((w) => w.type !== "gold")?._id ||
+                                                                    "",
+                                                            },
+                                                        },
+                                                    })
+                                                }
+                                            >
+                                                + Beli emas
+                                            </button>
+                                            {wallet.goldWeight > 0 && (
+                                                <button
+                                                    type="button"
+                                                    style={{ backgroundColor: chipBgColor, color: textColor }}
+                                                    onClick={() =>
+                                                        navigate("/transactions/new", {
+                                                            state: {
+                                                                preset: {
+                                                                    type: "transfer",
+                                                                    walletId: wallet._id,
+                                                                    transferTo:
+                                                                        wallets.find((w) => w.type !== "gold" && w.isDefault)?._id ||
+                                                                        wallets.find((w) => w.type !== "gold")?._id ||
+                                                                        "",
+                                                                },
+                                                            },
+                                                        })
+                                                    }
+                                                >
+                                                    Jual emas
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
 
-                                    {/* initial balance removed from wallet card UI */}
+                                    <div className="wallet-card-hint" style={{ color: mutedTextColor }}>
+                                        Lihat histori <FiArrowRight aria-hidden />
+                                    </div>
                                 </div>
                             );
                         })}
@@ -394,390 +1096,6 @@ export default function Wallets() {
                 )}
             </Card>
 
-            {editModal && (
-                <Modal
-                    title={`Edit Wallet - ${editingWallet?.name || ""}`}
-                    onClose={() => setEditModal(false)}
-                >
-                    {editError && <div style={errorBox}>⚠️ {editError}</div>}
-                    <form
-                        onSubmit={async (e) => {
-                            e.preventDefault();
-                            setEditError("");
-                            const parsed = parseNumberInput(editBalance);
-                            if (Number.isNaN(parsed) || parsed < 0) {
-                                return setEditError(
-                                    "Saldo harus angka dan >= 0",
-                                );
-                            }
-                            // Check if trying to remove default status when it's the only default
-                            if (
-                                editingWallet.isDefault &&
-                                !editDefault &&
-                                wallets.filter((w) => w.isDefault).length === 1
-                            ) {
-                                return setEditError(
-                                    "Minimal satu wallet harus default.",
-                                );
-                            }
-                            setEditSaving(true);
-                            window.scrollTo(0, 0);
-                            try {
-                                // prepare update payload
-                                const updatePayload = {};
-                                if (editColor !== editingWallet.color) {
-                                    updatePayload.color = editColor;
-                                }
-                                if (editDefault !== editingWallet.isDefault) {
-                                    updatePayload.isDefault = editDefault;
-                                }
-                                if (Object.keys(updatePayload).length > 0) {
-                                    await updateWalletAPI(
-                                        editingWallet._id,
-                                        updatePayload,
-                                    );
-                                }
-                                // handle balance difference by creating transaction
-                                const delta =
-                                    parsed - (editingWallet?.balance || 0);
-                                if (delta !== 0) {
-                                    const t = {
-                                        walletId: editingWallet._id,
-                                        type: delta > 0 ? "income" : "expense",
-                                        amount: Math.abs(delta),
-                                        description: "Penyesuaian saldo",
-                                    };
-                                    await createTransactionAPI(t);
-                                }
-                                await refresh();
-                                setEditModal(false);
-                            } catch (err) {
-                                setEditError(
-                                    err.response?.data?.message ||
-                                        "Gagal menyimpan perubahan",
-                                );
-                            } finally {
-                                setEditSaving(false);
-                            }
-                        }}
-                    >
-                        <div style={{ display: "grid", gap: "12px" }}>
-                            <Field label="Warna">
-                                <input
-                                    type="color"
-                                    value={editColor}
-                                    onChange={(e) =>
-                                        setEditColor(e.target.value)
-                                    }
-                                    style={{ ...inputStyle, padding: "4px" }}
-                                />
-                            </Field>
-                            <Field label="Saldo Saat Ini">
-                                <input
-                                    type="text"
-                                    value={editBalance}
-                                    onChange={(e) =>
-                                        setEditBalance(
-                                            formatNumberInput(e.target.value),
-                                        )
-                                    }
-                                    style={inputStyle}
-                                    inputMode="numeric"
-                                />
-                            </Field>
-                            <div
-                                style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: "8px",
-                                }}
-                            >
-                                <input
-                                    type="checkbox"
-                                    id="editDefaultCheckbox"
-                                    checked={editDefault}
-                                    onChange={(e) =>
-                                        setEditDefault(e.target.checked)
-                                    }
-                                    style={{
-                                        cursor: "pointer",
-                                        width: "16px",
-                                        height: "16px",
-                                    }}
-                                />
-                                <label
-                                    htmlFor="editDefaultCheckbox"
-                                    style={{
-                                        fontSize: "14px",
-                                        color: "var(--app-text-strong)",
-                                        cursor: "pointer",
-                                    }}
-                                >
-                                    Jadikan Wallet Default
-                                </label>
-                            </div>
-                            <div
-                                style={{
-                                    display: "flex",
-                                    justifyContent: "space-between",
-                                    gap: "10px",
-                                    alignItems: "center",
-                                }}
-                            >
-                                <div>
-                                    <button
-                                        type="button"
-                                        onClick={() => setEditModal(false)}
-                                        style={secondaryBtn}
-                                    >
-                                        Batal
-                                    </button>
-                                </div>
-
-                                <div
-                                    style={{
-                                        display: "flex",
-                                        gap: "10px",
-                                        alignItems: "center",
-                                    }}
-                                >
-                                    <button
-                                        type="button"
-                                        onClick={() =>
-                                            setShowDeleteConfirm((s) => !s)
-                                        }
-                                        style={{
-                                            padding: "10px 12px",
-                                            borderRadius: "10px",
-                                            border: "1px solid rgba(239,68,68,0.28)",
-                                            backgroundColor:
-                                                "rgba(239,68,68,0.08)",
-                                            color: "#ef4444",
-                                            cursor: "pointer",
-                                            fontWeight: 700,
-                                        }}
-                                    >
-                                        Hapus
-                                    </button>
-                                    <button
-                                        type="submit"
-                                        disabled={editSaving}
-                                        style={{
-                                            ...actionBtn,
-                                            minWidth: "140px",
-                                        }}
-                                    >
-                                        {editSaving
-                                            ? "Menyimpan..."
-                                            : "Simpan Perubahan"}
-                                    </button>
-                                </div>
-                            </div>
-
-                            {showDeleteConfirm && (
-                                <div
-                                    style={{
-                                        marginTop: "14px",
-                                        borderTop:
-                                            "1px solid var(--app-border)",
-                                        paddingTop: "12px",
-                                    }}
-                                >
-                                    <div
-                                        style={{
-                                            marginBottom: "8px",
-                                            color: "var(--app-text-strong)",
-                                            fontWeight: 700,
-                                        }}
-                                    >
-                                        Konfirmasi Hapus
-                                    </div>
-                                    <div
-                                        style={{
-                                            marginBottom: "8px",
-                                            color: "var(--app-muted)",
-                                        }}
-                                    >
-                                        Ketik nama wallet{" "}
-                                        <strong>{editingWallet?.name}</strong>{" "}
-                                        untuk menghapus.
-                                    </div>
-                                    {deleteError && (
-                                        <div
-                                            style={{
-                                                color: "#ef4444",
-                                                marginBottom: "8px",
-                                            }}
-                                        >
-                                            {deleteError}
-                                        </div>
-                                    )}
-                                    <div
-                                        style={{
-                                            display: "flex",
-                                            gap: "8px",
-                                            alignItems: "center",
-                                        }}
-                                    >
-                                        <input
-                                            type="text"
-                                            value={deleteInput}
-                                            onChange={(e) =>
-                                                setDeleteInput(e.target.value)
-                                            }
-                                            placeholder={
-                                                editingWallet?.name || ""
-                                            }
-                                            style={{ ...inputStyle }}
-                                        />
-                                        <button
-                                            type="button"
-                                            disabled={
-                                                deleteLoading ||
-                                                deleteInput !==
-                                                    editingWallet?.name
-                                            }
-                                            onClick={async () => {
-                                                setDeleteError("");
-                                                if (
-                                                    deleteInput !==
-                                                    editingWallet?.name
-                                                )
-                                                    return setDeleteError(
-                                                        "Nama tidak cocok",
-                                                    );
-                                                setDeleteLoading(true);
-                                                try {
-                                                    await archiveWalletAPI(
-                                                        editingWallet._id,
-                                                    );
-                                                    await refresh();
-                                                    setEditModal(false);
-                                                } catch (err) {
-                                                    setDeleteError(
-                                                        err.response?.data
-                                                            ?.message ||
-                                                            "Gagal menghapus wallet",
-                                                    );
-                                                } finally {
-                                                    setDeleteLoading(false);
-                                                }
-                                            }}
-                                            style={{
-                                                padding: "10px 12px",
-                                                borderRadius: "10px",
-                                                border: "none",
-                                                backgroundColor: "#ef4444",
-                                                color: "white",
-                                                cursor: deleteLoading
-                                                    ? "not-allowed"
-                                                    : "pointer",
-                                                fontWeight: 700,
-                                            }}
-                                        >
-                                            {deleteLoading
-                                                ? "Menghapus..."
-                                                : "Konfirmasi Hapus"}
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    </form>
-                </Modal>
-            )}
-
-            {showModal && (
-                <Modal title="Add Wallet" onClose={handleCloseModal}>
-                    <form onSubmit={handleSubmit}>
-                        {error && <div style={errorBox}>⚠️ {error}</div>}
-
-                        <div style={modalGridTwo}>
-                            <Field label="Nama Wallet">
-                                <input
-                                    value={form.name}
-                                    onChange={(e) =>
-                                        setForm({
-                                            ...form,
-                                            name: e.target.value,
-                                        })
-                                    }
-                                    style={inputStyle}
-                                    placeholder="BCA, Gopay, OVO, Cash"
-                                    autoFocus
-                                    required
-                                />
-                            </Field>
-                            <Field label="Tipe Wallet">
-                                <DropdownMenu
-                                    label=""
-                                    value={form.type}
-                                    options={Object.keys(typeLabel).map(
-                                        (k) => ({
-                                            value: k,
-                                            label: typeLabel[k],
-                                        }),
-                                    )}
-                                    onChange={(v) =>
-                                        setForm({ ...form, type: v })
-                                    }
-                                />
-                            </Field>
-                        </div>
-
-                        <div style={modalGridTwoBottom}>
-                            <Field label="Saldo Awal">
-                                <input
-                                    type="text"
-                                    value={form.balance}
-                                    onChange={(e) =>
-                                        setForm({
-                                            ...form,
-                                            balance: formatNumberInput(
-                                                e.target.value,
-                                            ),
-                                        })
-                                    }
-                                    style={inputStyle}
-                                    placeholder="0"
-                                    inputMode="numeric"
-                                    required
-                                />
-                            </Field>
-                            <Field label="Warna">
-                                <input
-                                    type="color"
-                                    value={form.color}
-                                    onChange={(e) =>
-                                        setForm({
-                                            ...form,
-                                            color: e.target.value,
-                                        })
-                                    }
-                                    style={{ ...inputStyle, padding: "4px" }}
-                                />
-                            </Field>
-                        </div>
-
-                        <div style={modalActions}>
-                            <button
-                                type="button"
-                                onClick={handleCloseModal}
-                                style={secondaryBtn}
-                            >
-                                Batal
-                            </button>
-                            <button
-                                type="submit"
-                                disabled={saving}
-                                style={{ ...actionBtn, minWidth: "140px" }}
-                            >
-                                {saving ? "Membuat..." : "Buat Wallet"}
-                            </button>
-                        </div>
-                    </form>
-                </Modal>
-            )}
         </div>
     );
 }
@@ -841,13 +1159,6 @@ const modalGridTwo = {
     gridTemplateColumns: "1.2fr 0.8fr",
     gap: "14px",
     marginBottom: "14px",
-};
-
-const modalGridTwoBottom = {
-    display: "grid",
-    gridTemplateColumns: "1fr 220px",
-    gap: "14px",
-    marginBottom: "18px",
 };
 
 const modalActions = {

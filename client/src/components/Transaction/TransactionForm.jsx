@@ -8,6 +8,7 @@ import {
 } from "../../utils/format";
 import Modal from "../ui/Modal";
 import DropdownMenu from "../ui/DropdownMenu";
+import DatePicker from "../ui/DatePicker";
 
 const MOODS = [
     { value: "senang", label: "😄 Senang" },
@@ -212,7 +213,7 @@ export default function TransactionForm({ editData, onClose, onSaved }) {
                             {
                                 v: "transfer",
                                 label: "🔄 Transfer",
-                                color: "#4f46e5",
+                                color: "#1e6e55",
                             },
                         ].map(({ v, label, color }) => (
                             <button
@@ -361,11 +362,10 @@ export default function TransactionForm({ editData, onClose, onSaved }) {
                 >
                     <div>
                         <label style={labelStyle}>Tanggal</label>
-                        <input
-                            type="date"
+                        <DatePicker
                             value={form.date}
-                            onChange={(e) => set("date", e.target.value)}
-                            style={inputStyle}
+                            onChange={(v) => set("date", v)}
+                            clearable={false}
                         />
                     </div>
                     <div>
@@ -417,14 +417,14 @@ export default function TransactionForm({ editData, onClose, onSaved }) {
                                     borderRadius: "12px",
                                     fontSize: "13px",
                                     cursor: "pointer",
-                                    border: `1.5px solid ${form.mood === m.value ? "#4f46e5" : "var(--app-border)"}`,
+                                    border: `1.5px solid ${form.mood === m.value ? "var(--accent)" : "var(--app-border)"}`,
                                     backgroundColor:
                                         form.mood === m.value
-                                            ? "rgba(79, 70, 229, 0.08)"
+                                            ? "var(--accent-bg)"
                                             : "var(--app-surface)",
                                     color:
                                         form.mood === m.value
-                                            ? "#4338ca"
+                                            ? "var(--accent)"
                                             : "var(--app-text)",
                                     fontWeight:
                                         form.mood === m.value ? "600" : "500",

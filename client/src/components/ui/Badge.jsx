@@ -1,6 +1,6 @@
 export default function Badge({
     children,
-    color = "#4f46e5",
+    color = "#1e6e55",
     bg,
     size = "sm",
 }) {

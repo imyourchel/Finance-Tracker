@@ -1,4 +1,5 @@
 import axios from "axios";
+import { loadingBus } from "../utils/loadingBus";
 
 // const API = axios.create({ baseURL: "http://localhost:5000/api" });
 const API = axios.create({ baseURL: import.meta.env.VITE_API_URL });
@@ -7,14 +8,36 @@ const API = axios.create({ baseURL: import.meta.env.VITE_API_URL });
 API.interceptors.request.use((config) => {
     const token = localStorage.getItem("token");
     if (token) config.headers.Authorization = `Bearer ${token}`;
+    loadingBus.start();
     return config;
 });
 
+const PUBLIC_AUTH_PATHS = [
+    "/auth/login",
+    "/auth/register",
+    "/auth/google",
+    "/auth/forgot-password",
+    "/auth/reset-password",
+    "/auth/verify-email",
+];
+
 API.interceptors.response.use(
-    (res) => res,
+    (res) => {
+        loadingBus.done();
+        return res;
+    },
     (err) => {
+        loadingBus.done();
         const requestUrl = err.config?.url || "";
-        const isAuthRequest = requestUrl.includes("/auth/login");
+        const isAuthRequest = PUBLIC_AUTH_PATHS.some((p) =>
+            requestUrl.includes(p),
+        );
+
+        if (!err.response) {
+            err.message =
+                "Tidak bisa terhubung ke server. Cek koneksi internet atau pastikan backend sedang berjalan.";
+            return Promise.reject(err);
+        }
 
         if (err.response?.status === 401 && !isAuthRequest) {
             localStorage.removeItem("token");
@@ -43,6 +66,18 @@ export const updateProfileAPI = (d) => {
 };
 export const changePasswordAPI = (d) => API.put("/auth/password", d);
 export const forgotPasswordAPI = (d) => API.post("/auth/forgot-password", d);
+export const resetPasswordAPI = (token, d) =>
+    API.put(`/auth/reset-password/${token}`, d);
+export const googleLoginAPI = (d) => API.post("/auth/google", d);
+export const verifyEmailAPI = (token) =>
+    API.get("/auth/verify-email", { params: { token } });
+
+// ── GAMIFIKASI ────────────────────────────────────────
+export const getGamificationAPI = () => API.get("/gamification");
+export const getPaydayAPI = () => API.get("/payday");
+export const claimQuestAPI = (questId) => API.post(`/gamification/quests/${questId}/claim`);
+export const joinChallengeAPI = (d) => API.post("/gamification/challenges", d);
+export const abandonChallengeAPI = (id) => API.delete(`/gamification/challenges/${id}`);
 
 // ── WALLETS ───────────────────────────────────────────
 export const getWalletsAPI = () => API.get("/wallets");
@@ -102,3 +137,6 @@ export const getRecurringsAPI = () => API.get("/recurring");
 export const createRecurringAPI = (d) => API.post("/recurring", d);
 export const toggleRecurringAPI = (id) => API.put(`/recurring/${id}/toggle`);
 export const deleteRecurringAPI = (id) => API.delete(`/recurring/${id}`);
+
+// Instance axios dipakai juga oleh service lain (mis. insightsApi, planningApi)
+export default API;

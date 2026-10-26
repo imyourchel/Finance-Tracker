@@ -45,6 +45,12 @@ const transactionSchema = new mongoose.Schema(
             type: Number,
             default: 0,
         },
+        // Berat emas (gram) yang ikut berpindah — hanya untuk wallet emas
+        goldWeight: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
         isTransfer: {
             type: Boolean,
             default: false,
@@ -104,6 +110,13 @@ const transactionSchema = new mongoose.Schema(
         goalId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Goal",
+            default: null,
+        },
+        // Uang pinjam-meminjam (utang/piutang/patungan). Bukan pemasukan/pengeluaran
+        // sungguhan, jadi dikecualikan dari statistik seperti baris goalId.
+        debtId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Debt",
             default: null,
         },
         isDeleted: {

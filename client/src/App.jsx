@@ -1,47 +1,58 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, lazy, Suspense } from "react";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { FinanceProvider } from "./context/FinanceContext";
 
-import Login from "./pages/Login";
-import Register from "./pages/Register";
-import Dashboard from "./pages/Dashboard";
-import Transactions from "./pages/Transactions";
-import Analytics from "./pages/Analytics";
-import Budgets from "./pages/Budgets";
-import Goals from "./pages/Goals";
-import Settings from "./pages/Settings";
-import InitialBalance from "./pages/InitialBalance";
-import Recurring from "./pages/Recurring";
-import Wallets from "./pages/Wallets";
+import Auth from "./pages/Auth";
+import LevelUpCelebration from "./components/gamification/LevelUpCelebration";
+import XpFeedback from "./components/gamification/XpFeedback";
+import QuickAdd from "./components/quickadd/QuickAdd";
+
+// Halaman dimuat saat dibuka saja supaya pembukaan pertama lebih cepat
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Transactions = lazy(() => import("./pages/Transactions"));
+const Analytics = lazy(() => import("./pages/Analytics"));
+const Budgets = lazy(() => import("./pages/Budgets"));
+const Goals = lazy(() => import("./pages/Goals"));
+const Settings = lazy(() => import("./pages/Settings"));
+const InitialBalance = lazy(() => import("./pages/InitialBalance"));
+const Recurring = lazy(() => import("./pages/Recurring"));
+const Wallets = lazy(() => import("./pages/Wallets"));
+const WalletDetail = lazy(() => import("./pages/WalletDetail"));
+const Debts = lazy(() => import("./pages/Debts"));
+const Wrapped = lazy(() => import("./pages/Wrapped"));
+const FinancialHealth = lazy(() => import("./pages/FinancialHealth"));
+const TransactionEditor = lazy(() => import("./pages/TransactionEditor"));
+const Achievements = lazy(() => import("./pages/Achievements"));
+const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
+const DataTools = lazy(() => import("./pages/DataTools"));
 
 import Sidebar from "./components/Layout/Sidebar";
+import MobileNav from "./components/Layout/MobileNav";
+import OnboardingTour from "./components/onboarding/OnboardingTour";
+import ReminderCenter from "./components/reminders/ReminderCenter";
+import "./styles/layout.css";
 import ScrollToTop from "./components/Layout/ScrollToTop";
 import ErrorBoundary from "./components/ErrorBoundary";
+import TopProgress from "./components/Layout/TopProgress";
+import AppLoader from "./components/Layout/AppLoader";
+import ConfirmHost from "./components/ui/ConfirmDialog";
 
 function PrivateRoute({ children }) {
     const { user, loading } = useAuth();
 
-    if (loading) {
-        return (
-            <div
-                style={{
-                    minHeight: "100vh",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexDirection: "column",
-                    gap: "12px",
-                    color: "#64748b",
-                }}
-            >
-                <div className="loading-spinner" />
-                <div>Memuat...</div>
-            </div>
-        );
-    }
+    if (loading) return <AppLoader />;
 
     return user ? children : <Navigate to="/login" replace />;
+}
+
+// Halaman login/lupa password tidak perlu dibuka lagi kalau sudah masuk
+function PublicOnlyRoute({ children }) {
+    const { user, loading } = useAuth();
+    if (loading) return <AppLoader label="Memeriksa sesi..." />;
+    return user ? <Navigate to="/" replace /> : children;
 }
 
 function AppLayout({ children }) {
@@ -73,25 +84,17 @@ function AppLayout({ children }) {
 
     return (
         <FinanceProvider>
-            <div
-                style={{
-                    display: "flex",
-                    height: "100vh",
-                    backgroundColor: "var(--app-bg)",
-                    color: "var(--app-text)",
-                }}
-            >
+            <div className="app-shell">
                 <Sidebar />
-                <main
-                    style={{
-                        flex: 1,
-                        overflowY: "auto",
-                        height: "100vh",
-                        minHeight: 0,
-                    }}
-                >
-                    {children}
+                <LevelUpCelebration />
+                <XpFeedback />
+                <QuickAdd />
+                <OnboardingTour />
+                <ReminderCenter />
+                <main className="app-main">
+                    <Suspense fallback={<AppLoader label="Memuat halaman..." />}>{children}</Suspense>
                 </main>
+                <MobileNav />
             </div>
         </FinanceProvider>
     );
@@ -110,9 +113,23 @@ export default function App() {
         <AuthProvider>
             <BrowserRouter>
                 <ScrollToTop />
+                <TopProgress />
+                <ConfirmHost />
+                <Suspense fallback={<AppLoader />}>
                 <Routes>
-                    <Route path="/login" element={<Login />} />
-                    <Route path="/register" element={<Register />} />
+                    {/* Satu komponen untuk dua URL supaya panel bisa bergeser */}
+                    <Route path="/login" element={<Auth />} />
+                    <Route path="/register" element={<Auth />} />
+                    <Route
+                        path="/forgot-password"
+                        element={
+                            <PublicOnlyRoute>
+                                <ForgotPassword />
+                            </PublicOnlyRoute>
+                        }
+                    />
+                    <Route path="/reset-password" element={<ResetPassword />} />
+                    <Route path="/verify-email" element={<VerifyEmail />} />
 
                     <Route
                         path="/setup-initial-balance"
@@ -136,6 +153,30 @@ export default function App() {
                         element={
                             <Private>
                                 <Transactions />
+                            </Private>
+                        }
+                    />
+                    <Route
+                        path="/transactions/new"
+                        element={
+                            <Private>
+                                <TransactionEditor />
+                            </Private>
+                        }
+                    />
+                    <Route
+                        path="/transactions/:id/edit"
+                        element={
+                            <Private>
+                                <TransactionEditor />
+                            </Private>
+                        }
+                    />
+                    <Route
+                        path="/pencapaian"
+                        element={
+                            <Private>
+                                <Achievements />
                             </Private>
                         }
                     />
@@ -187,10 +228,51 @@ export default function App() {
                             </Private>
                         }
                     />
+                    <Route
+                        path="/wallets/:id"
+                        element={
+                            <Private>
+                                <WalletDetail />
+                            </Private>
+                        }
+                    />
 
+                    <Route
+                        path="/utang"
+                        element={
+                            <Private>
+                                <Debts />
+                            </Private>
+                        }
+                    />
+                    <Route
+                        path="/wrapped"
+                        element={
+                            <Private>
+                                <Wrapped />
+                            </Private>
+                        }
+                    />
+                    <Route
+                        path="/kesehatan"
+                        element={
+                            <Private>
+                                <FinancialHealth />
+                            </Private>
+                        }
+                    />
+                    <Route
+                        path="/data"
+                        element={
+                            <Private>
+                                <DataTools />
+                            </Private>
+                        }
+                    />
                     <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
+                </Suspense>
             </BrowserRouter>
         </AuthProvider>
     );
-}
+}

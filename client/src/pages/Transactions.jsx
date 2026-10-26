@@ -1,12 +1,16 @@
 import { useState, useEffect, useCallback } from "react";
+import { confirmDialog } from "../utils/confirm";
+import { useNavigate } from "react-router-dom";
 import DropdownMenu from "../components/ui/DropdownMenu";
 import { getTransactionsAPI, deleteTransactionAPI } from "../services/api";
 import { useFinance } from "../context/FinanceContext";
 import { MONTHS } from "../utils/format";
-import TransactionForm from "../components/Transaction/TransactionForm";
 import TransactionItem from "../components/Transaction/TransactionItem";
 import Card from "../components/ui/Card";
 import PageHeader from "../components/Layout/PageHeader";
+import EmptyState from "../components/ui/EmptyState";
+import { openQuickAdd } from "../utils/quickAddBus";
+import { FiSearch, FiZap, FiDownload } from "react-icons/fi";
 
 const sel = {
     padding: "8px 12px",
@@ -22,8 +26,7 @@ export default function Transactions() {
 
     const [transactions, setTransactions] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [showForm, setShowForm] = useState(false);
-    const [editData, setEditData] = useState(null);
+    const navigate = useNavigate();
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
     const [total, setTotal] = useState(0);
@@ -64,31 +67,31 @@ export default function Transactions() {
     }, [month, year, page, filter]);
 
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- muat ulang saat filter berubah
         fetchTransactions();
     }, [fetchTransactions]);
 
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- kembali ke halaman 1 saat filter berubah
         setPage(1);
     }, [month, year, filter.type, filter.wallet, filter.category, filter.search]);
 
     const handleDelete = async (id) => {
-        if (!confirm("Hapus transaksi ini?")) return;
+        if (
+            !(await confirmDialog({
+                title: "Hapus transaksi ini?",
+                message: "Saldo wallet akan dikembalikan seperti sebelum transaksi ini dicatat.",
+                confirmLabel: "Hapus",
+            }))
+        )
+            return;
         await deleteTransactionAPI(id);
         await fetchTransactions();
         refresh();
     };
 
     const handleEdit = (t) => {
-        setEditData(t);
-        setShowForm(true);
-    };
-
-    const handleSaved = async () => {
-        window.scrollTo(0, 0);
-        setShowForm(false);
-        setEditData(null);
-        await fetchTransactions();
-        refresh();
+        navigate(`/transactions/${t._id}/edit`, { state: { transaction: t } });
     };
 
     const setF = (field, val) =>
@@ -100,14 +103,20 @@ export default function Transactions() {
                 title="Transaksi"
                 subtitle={`${total} transaksi ditemukan`}
                 action={
+                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                     <button
-                        onClick={() => {
-                            setEditData(null);
-                            setShowForm(true);
-                        }}
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => navigate("/data")}
+                        title="Ekspor ke CSV/Excel atau impor mutasi rekening"
+                    >
+                        <FiDownload aria-hidden /> Ekspor / Impor
+                    </button>
+                    <button
+                        onClick={() => navigate("/transactions/new")}
                         style={{
                             padding: "10px 20px",
-                            background: "linear-gradient(135deg,#4f46e5,#7c3aed)",
+                            background: "linear-gradient(135deg, var(--app-button-primary-from), var(--app-button-primary-to))",
                             color: "white",
                             border: "none",
                             borderRadius: "10px",
@@ -116,8 +125,9 @@ export default function Transactions() {
                             fontSize: "14px",
                         }}
                     >
-                        + Tambah
+                        + Tambah transaksi
                     </button>
+                    </div>
                 }
             />
 
@@ -218,9 +228,21 @@ export default function Transactions() {
                         Memuat...
                     </p>
                 ) : transactions.length === 0 ? (
-                    <p style={{ textAlign: "center", padding: "48px", color: "#94a3b8", fontSize: "14px" }}>
-                        Tidak ada transaksi ditemukan
-                    </p>
+                    Object.values(filter).some(Boolean) ? (
+                        <EmptyState
+                            icon={FiSearch}
+                            title="Tidak ada transaksi yang cocok"
+                            description="Coba ubah filter, kata kunci, atau pilih bulan lain."
+                        />
+                    ) : (
+                        <EmptyState
+                            mascot="semut"
+                            title={`Belum ada transaksi di ${MONTHS[month - 1]} ${year}`}
+                            description="Mulai dari yang kecil. Ketik “makan siang 25rb” dan DailyTrack mengisi sisanya."
+                            action={{ label: "Catat cepat", icon: FiZap, onClick: openQuickAdd }}
+                            secondary={{ label: "Isi lengkap", to: "/transactions/new" }}
+                        />
+                    )
                 ) : (
                     transactions.map((t) => (
                         <TransactionItem
@@ -286,16 +308,6 @@ export default function Transactions() {
                 </div>
             )}
 
-            {showForm && (
-                <TransactionForm
-                    editData={editData}
-                    onClose={() => {
-                        setShowForm(false);
-                        setEditData(null);
-                    }}
-                    onSaved={handleSaved}
-                />
-            )}
         </div>
     );
-}
+}

@@ -1,6 +1,6 @@
 export default function ProgressBar({
     percentage = 0,
-    color = "#4f46e5",
+    color = "#1e6e55",
     height = 8,
     showLabel = false,
 }) {

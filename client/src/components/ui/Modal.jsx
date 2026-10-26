@@ -10,7 +10,8 @@ export default function Modal({
             style={{
                 position: "fixed",
                 inset: 0,
-                backgroundColor: "rgba(15,23,42,0.5)",
+                backgroundColor: "rgba(11,19,17,0.45)",
+                backdropFilter: "blur(3px)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -24,12 +25,12 @@ export default function Modal({
             <div
                 style={{
                     backgroundColor: "var(--app-surface)",
-                    borderRadius: "16px",
+                    borderRadius: "18px",
                     width: "100%",
                     maxWidth,
                     maxHeight: "90vh",
                     overflowY: "auto",
-                    boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
+                    boxShadow: "0 24px 64px -12px rgba(11,19,17,0.35)",
                     border: "1px solid var(--app-border)",
                 }}
             >

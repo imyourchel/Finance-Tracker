@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Transaction = require("../models/Transaction");
 const Wallet = require("../models/Wallet");
 const Budget = require("../models/Budget");
@@ -30,6 +31,25 @@ const updateWalletBalance = async (
     }
     await wallet.save();
 };
+
+// ============================================================
+// Helper: wallet emas — ubah berat (gram) lalu hitung ulang harga rata-rata
+// per gram supaya saldo = berat × harga beli rata-rata tetap konsisten.
+// Dipanggil SETELAH saldo wallet diperbarui.
+// ============================================================
+const adjustGold = async (walletId, gramsDelta, userId) => {
+    const delta = Number(gramsDelta) || 0;
+    if (!delta) return;
+    const wallet = await Wallet.findOne({ _id: walletId, user: userId });
+    if (!wallet || wallet.type !== "gold") return;
+    const weight = Math.max(0, Math.round(((wallet.goldWeight || 0) + delta) * 1000) / 1000);
+    wallet.goldWeight = weight;
+    wallet.goldBuyPrice = weight > 0 ? Math.round(wallet.balance / weight) : 0;
+    await wallet.save();
+};
+
+// Arah perubahan berat emas untuk satu baris transaksi
+const goldDirection = (type) => (type === "income" ? 1 : type === "expense" ? -1 : 0);
 
 const applyTransferBalance = async (
     sourceWalletId,
@@ -155,8 +175,45 @@ const getTransactions = async (req, res) => {
             Transaction.countDocuments(filter),
         ]);
 
+        // Total uang masuk/keluar untuk seluruh hasil filter (bukan cuma halaman ini).
+        // Dipakai halaman detail wallet. Biaya transfer ikut dihitung sebagai keluar.
+        let totals;
+        if (wallet) {
+            const match = { ...filter, user: new mongoose.Types.ObjectId(req.user.id) };
+            if (mongoose.isValidObjectId(wallet)) match.wallet = new mongoose.Types.ObjectId(wallet);
+            if (category && mongoose.isValidObjectId(category)) match.category = new mongoose.Types.ObjectId(category);
+            const agg = await Transaction.aggregate([
+                { $match: match },
+                {
+                    $group: {
+                        _id: null,
+                        income: { $sum: { $cond: [{ $eq: ["$type", "income"] }, "$amount", 0] } },
+                        expense: {
+                            $sum: {
+                                $cond: [
+                                    { $eq: ["$type", "expense"] },
+                                    { $add: ["$amount", { $ifNull: ["$transferFee", 0] }] },
+                                    0,
+                                ],
+                            },
+                        },
+                        goldIn: { $sum: { $cond: [{ $eq: ["$type", "income"] }, { $ifNull: ["$goldWeight", 0] }, 0] } },
+                        goldOut: { $sum: { $cond: [{ $eq: ["$type", "expense"] }, { $ifNull: ["$goldWeight", 0] }, 0] } },
+                    },
+                },
+            ]);
+            const t = agg[0] || {};
+            totals = {
+                income: t.income || 0,
+                expense: t.expense || 0,
+                goldIn: t.goldIn || 0,
+                goldOut: t.goldOut || 0,
+            };
+        }
+
         res.json({
             transactions,
+            ...(totals && { totals }),
             pagination: {
                 total,
                 page: pageNum,
@@ -191,7 +248,9 @@ const createTransaction = async (req, res) => {
             subCategory,
             location,
             isRecurring,
+            goldWeight,
         } = req.body;
+        const parsedGoldWeight = Math.max(0, Number(String(goldWeight ?? 0).replace(",", ".")) || 0);
 
         const parsedAmount = Number(amount);
         const parsedTransferFee = Number(transferFee || 0);
@@ -253,6 +312,15 @@ const createTransaction = async (req, res) => {
                 return res.status(400).json({ message: "Saldo tidak cukup" });
             }
 
+            // Transfer yang melibatkan wallet emas wajib menyertakan berat (gram)
+            const goldInvolved = wallet.type === "gold" || destWallet.type === "gold";
+            if (goldInvolved && !(parsedGoldWeight > 0))
+                return res.status(400).json({ message: "Isi berat emas (gram) untuk transaksi emas" });
+            if (wallet.type === "gold" && parsedGoldWeight > (wallet.goldWeight || 0))
+                return res.status(400).json({
+                    message: `Berat emas di ${wallet.name} hanya ${wallet.goldWeight || 0} gram`,
+                });
+
             const baseDate = date || Date.now();
             const baseTags = tags || [];
             const baseDescription = description || "";
@@ -272,6 +340,7 @@ const createTransaction = async (req, res) => {
                 tags: baseTags,
                 transferTo,
                 transferFee: parsedTransferFee,
+                goldWeight: wallet.type === "gold" ? parsedGoldWeight : 0,
                 isTransfer: true,
                 transferPairId: null,
                 goalId: goalId || null,
@@ -293,6 +362,7 @@ const createTransaction = async (req, res) => {
                 tags: baseTags,
                 transferTo: walletId,
                 transferFee: 0,
+                goldWeight: destWallet.type === "gold" ? parsedGoldWeight : 0,
                 isTransfer: true,
                 transferPairId: outTransaction._id,
                 goalId: goalId || null,
@@ -319,6 +389,10 @@ const createTransaction = async (req, res) => {
                 req.user._id,
             );
 
+            // Emas: berat keluar dari wallet asal / masuk ke wallet tujuan
+            if (wallet.type === "gold") await adjustGold(walletId, -parsedGoldWeight, req.user._id);
+            if (destWallet.type === "gold") await adjustGold(transferTo, parsedGoldWeight, req.user._id);
+
             const populated = await outTransaction
                 .populate("wallet", "name icon color")
                 .then((t) => t.populate("transferTo", "name icon color"))
@@ -330,6 +404,15 @@ const createTransaction = async (req, res) => {
         // Cek saldo cukup untuk pengeluaran
         if (type === "expense" && wallet.balance < parsedAmount) {
             return res.status(400).json({ message: "Saldo tidak cukup" });
+        }
+
+        if (wallet.type === "gold") {
+            if (!(parsedGoldWeight > 0))
+                return res.status(400).json({ message: "Isi berat emas (gram) untuk transaksi emas" });
+            if (type === "expense" && parsedGoldWeight > (wallet.goldWeight || 0))
+                return res.status(400).json({
+                    message: `Berat emas di ${wallet.name} hanya ${wallet.goldWeight || 0} gram`,
+                });
         }
 
         // Buat transaksi
@@ -346,6 +429,7 @@ const createTransaction = async (req, res) => {
             tags: baseTags,
             transferTo: null,
             transferFee: 0,
+            goldWeight: wallet.type === "gold" ? parsedGoldWeight : 0,
             goalId: goalId || null,
             location,
             isRecurring: isRecurring || false,
@@ -360,6 +444,8 @@ const createTransaction = async (req, res) => {
             false,
             req.user._id,
         );
+        if (wallet.type === "gold")
+            await adjustGold(walletId, goldDirection(type) * parsedGoldWeight, req.user._id);
 
         // Update budget spent kalau expense
         if (type === "expense") {
@@ -395,6 +481,10 @@ const updateTransaction = async (req, res) => {
             return res
                 .status(404)
                 .json({ message: "Transaksi tidak ditemukan" });
+        if (transaction.debtId)
+            return res.status(400).json({
+                message: "Transaksi ini bagian dari catatan utang-piutang. Ubah atau batalkan lewat halaman Utang & Patungan.",
+            });
 
         if (transaction.isTransfer) {
             return res.status(400).json({
@@ -431,6 +521,11 @@ const updateTransaction = async (req, res) => {
                 true,
                 req.user._id,
             );
+            await adjustGold(
+                previousState.wallet,
+                -goldDirection(previousState.type) * (transaction.goldWeight || 0),
+                req.user._id,
+            );
         }
         if (transaction.type === "expense") {
             await updateBudgetSpent(
@@ -458,7 +553,10 @@ const updateTransaction = async (req, res) => {
             subCategory,
             goalId,
             isRecurring,
+            goldWeight,
         } = req.body;
+        if (goldWeight !== undefined)
+            transaction.goldWeight = Math.max(0, Number(String(goldWeight).replace(",", ".")) || 0);
 
         const nextType = type || transaction.type;
         const nextWalletId = walletId || transaction.wallet;
@@ -597,6 +695,11 @@ const updateTransaction = async (req, res) => {
                 false,
                 req.user._id,
             );
+            await adjustGold(
+                transaction.wallet,
+                goldDirection(transaction.type) * (transaction.goldWeight || 0),
+                req.user._id,
+            );
         }
         if (transaction.type === "expense") {
             await updateBudgetSpent(
@@ -631,6 +734,10 @@ const deleteTransaction = async (req, res) => {
             return res
                 .status(404)
                 .json({ message: "Transaksi tidak ditemukan" });
+        if (transaction.debtId)
+            return res.status(400).json({
+                message: "Transaksi ini bagian dari catatan utang-piutang. Ubah atau batalkan lewat halaman Utang & Patungan.",
+            });
 
         if (transaction.isTransfer) {
             const related = transaction.transferPairId
@@ -647,6 +754,11 @@ const deleteTransaction = async (req, res) => {
                 true,
                 req.user._id,
             );
+            await adjustGold(
+                transaction.wallet,
+                -goldDirection(transaction.type) * (transaction.goldWeight || 0),
+                req.user._id,
+            );
 
             transaction.isDeleted = true;
             await transaction.save();
@@ -657,6 +769,11 @@ const deleteTransaction = async (req, res) => {
                     related.type,
                     related.amount,
                     true,
+                    req.user._id,
+                );
+                await adjustGold(
+                    related.wallet,
+                    -goldDirection(related.type) * (related.goldWeight || 0),
                     req.user._id,
                 );
                 related.isDeleted = true;
@@ -685,6 +802,12 @@ const deleteTransaction = async (req, res) => {
                 req.user._id,
             );
         }
+
+        await adjustGold(
+            transaction.wallet,
+            -goldDirection(transaction.type) * (transaction.goldWeight || 0),
+            req.user._id,
+        );
 
         // Reverse budget
         if (transaction.type === "expense") {

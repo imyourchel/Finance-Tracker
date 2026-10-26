@@ -3,4 +3,4 @@ node_modules
 uploads/avatars/*
 uploads/receipts/*
 !uploads/avatars/.gitkeep
-!uploads/receipts/.gitkeep
+!uploads/receipts/.gitkeepsmoke-report.txt

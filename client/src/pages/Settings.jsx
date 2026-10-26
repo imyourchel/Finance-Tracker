@@ -1,663 +1,488 @@
-import { useState, useEffect } from "react";
+import DropdownMenu from "../components/ui/DropdownMenu";
+import { useEffect, useMemo, useState } from "react";
+import { confirmDialog } from "../utils/confirm";
+import {
+    FiUser,
+    FiDollarSign,
+    FiSun,
+    FiMoon,
+    FiMonitor,
+    FiBell,
+    FiLock,
+    FiCheckCircle,
+    FiAlertCircle,
+} from "react-icons/fi";
 import { useAuth } from "../context/AuthContext";
 import { updateProfileAPI, changePasswordAPI } from "../services/api";
-import Card from "../components/ui/Card";
 import PageHeader from "../components/Layout/PageHeader";
+import DatePicker from "../components/ui/DatePicker";
+import TimePicker from "../components/ui/TimePicker";
+import Switch from "../components/ui/Switch";
+import { Link } from "react-router-dom";
+import { useFinance } from "../context/FinanceContext";
+import { personaById } from "../utils/personas";
+import PasswordInput from "../components/auth/PasswordInput";
+import NotificationExtras from "../components/reminders/NotificationExtras";
 import {
     formatDateInput,
     formatNumberInput,
     parseNumberInput,
 } from "../utils/format";
 
+const SECTIONS = [
+    { id: "profil", label: "Profil", icon: FiUser },
+    { id: "keuangan", label: "Keuangan", icon: FiDollarSign },
+    { id: "tampilan", label: "Tampilan", icon: FiSun },
+    { id: "notifikasi", label: "Notifikasi", icon: FiBell },
+    { id: "keamanan", label: "Keamanan", icon: FiLock },
+];
+
+const THEMES = [
+    { value: "light", label: "Terang", icon: FiSun },
+    { value: "dark", label: "Gelap", icon: FiMoon },
+    { value: "system", label: "Ikuti sistem", icon: FiMonitor },
+];
+
+const NOTIFS = [
+    ["dailyReminder", "Pengingat harian", "Email di jam pilihanmu kalau hari itu belum ada catatan, lengkap dengan status streak & budget"],
+    ["budgetAlert", "Peringatan budget", "Email saat budget kategori mencapai ambang (biasanya 80%) dan saat jebol"],
+    ["goalAlert", "Peringatan goal", "Email saat tenggat goal tinggal 7 hari / 1 hari, dan saat goal tercapai"],
+];
+
+const initialProfile = (user) => ({
+    name: user?.name || "",
+    dateOfBirth: user?.dateOfBirth ? formatDateInput(user.dateOfBirth) : "",
+    theme: user?.theme || "system",
+    monthlyIncome: user?.monthlyIncome ? formatNumberInput(String(user.monthlyIncome)) : "",
+    monthlyBudget: user?.monthlyBudget ? formatNumberInput(String(user.monthlyBudget)) : "",
+    payday: user?.payday ? String(user.payday) : "",
+});
+
+const initialNotifs = (user) => ({
+    dailyReminder: user?.notifications?.dailyReminder ?? true,
+    budgetAlert: user?.notifications?.budgetAlert ?? true,
+    goalAlert: user?.notifications?.goalAlert ?? true,
+    reminderTime: user?.notifications?.reminderTime || "20:00",
+});
+
 export default function Settings() {
     const { user, updateUser } = useAuth();
+    const { gamification } = useFinance();
+    const persona = gamification ? personaById(gamification.persona) : null;
 
-    const [profile, setProfile] = useState({
-        name: user?.name || "",
-        username: user?.username || "",
-        avatar: user?.avatar || "",
-        dateOfBirth: user?.dateOfBirth ? formatDateInput(user.dateOfBirth) : "",
-        // keep avatar (URL) but support file upload below
+    const [profile, setProfile] = useState(() => initialProfile(user));
+    const [notifications, setNotifications] = useState(() => initialNotifs(user));
+    const [saved, setSaved] = useState(() => ({
+        profile: initialProfile(user),
+        notifications: initialNotifs(user),
+    }));
+    const [saving, setSaving] = useState(false);
+    const [saveMsg, setSaveMsg] = useState({ type: "", text: "" });
 
-        theme: user?.theme || "system",
-        monthlyIncome:
-            user?.monthlyIncome !== undefined && user?.monthlyIncome !== null
-                ? formatNumberInput(user.monthlyIncome)
-                : "",
-        monthlyBudget:
-            user?.monthlyBudget !== undefined && user?.monthlyBudget !== null
-                ? formatNumberInput(user.monthlyBudget)
-                : "",
-    });
+    const [password, setPassword] = useState({ currentPassword: "", newPassword: "", confirm: "" });
+    const [pwSaving, setPwSaving] = useState(false);
+    const [pwMsg, setPwMsg] = useState({ type: "", text: "" });
 
+    const [activeSection, setActiveSection] = useState("profil");
+
+    const dirty = useMemo(
+        () =>
+            JSON.stringify(profile) !== JSON.stringify(saved.profile) ||
+            JSON.stringify(notifications) !== JSON.stringify(saved.notifications),
+        [profile, notifications, saved],
+    );
+
+    const setP = (k) => (v) => setProfile((p) => ({ ...p, [k]: v }));
+
+    // Sorot menu sesuai bagian yang sedang terlihat
     useEffect(() => {
-        window.scrollTo(0, 0);
+        const obs = new IntersectionObserver(
+            (entries) => {
+                const visible = entries
+                    .filter((e) => e.isIntersecting)
+                    .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+                if (visible[0]) setActiveSection(visible[0].target.id);
+            },
+            { rootMargin: "-20% 0px -60% 0px" },
+        );
+        SECTIONS.forEach(({ id }) => {
+            const el = document.getElementById(id);
+            if (el) obs.observe(el);
+        });
+        return () => obs.disconnect();
     }, []);
 
-    const [notifications, setNotifications] = useState({
-        dailyReminder: user?.notifications?.dailyReminder ?? true,
-        budgetAlert: user?.notifications?.budgetAlert ?? true,
-        goalAlert: user?.notifications?.goalAlert ?? true,
-        reminderTime: user?.notifications?.reminderTime || "20:00",
-    });
+    const goTo = (id) => {
+        setActiveSection(id);
+        document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
 
-    const [password, setPassword] = useState({
-        currentPassword: "",
-        newPassword: "",
-        confirm: "",
-    });
-    const [showPasswords, setShowPasswords] = useState({
-        currentPassword: false,
-        newPassword: false,
-        confirm: false,
-    });
-    const [msg, setMsg] = useState({ profile: "", password: "" });
-    const [err, setErr] = useState({ profile: "", password: "" });
-    const [selectedFile, setSelectedFile] = useState(null);
-    const [filePreview, setFilePreview] = useState(null);
-
-    const handleSaveProfile = async (e) => {
-        e.preventDefault();
-        window.scrollTo(0, 0);
+    const handleSave = async () => {
+        if (!profile.name.trim()) {
+            setSaveMsg({ type: "error", text: "Nama lengkap wajib diisi" });
+            goTo("profil");
+            return;
+        }
+        const ok = await confirmDialog({
+            title: "Simpan perubahan pengaturan?",
+            message: "Profil, data keuangan, tema, dan notifikasi akan diperbarui.",
+            confirmLabel: "Simpan",
+            danger: false,
+        });
+        if (!ok) return;
+        setSaving(true);
+        setSaveMsg({ type: "", text: "" });
         try {
-            let res;
-            if (selectedFile) {
-                const form = new FormData();
-                form.append("avatar", selectedFile);
-                form.append("name", profile.name);
-                form.append("username", profile.username);
-                form.append("dateOfBirth", profile.dateOfBirth || "");
-                form.append(
-                    "monthlyIncome",
-                    profile.monthlyIncome
-                        ? parseNumberInput(profile.monthlyIncome)
-                        : 0,
-                );
-                form.append(
-                    "monthlyBudget",
-                    profile.monthlyBudget
-                        ? parseNumberInput(profile.monthlyBudget)
-                        : 0,
-                );
-                form.append("theme", profile.theme);
-                form.append("notifications", JSON.stringify(notifications));
-
-                res = await updateProfileAPI(form);
-            } else {
-                res = await updateProfileAPI({
-                    ...profile,
-                    username: profile.username,
-                    avatar: profile.avatar,
-                    dateOfBirth: profile.dateOfBirth || null,
-                    notifications,
-                    monthlyIncome: profile.monthlyIncome
-                        ? parseNumberInput(profile.monthlyIncome)
-                        : 0,
-                    monthlyBudget: profile.monthlyBudget
-                        ? parseNumberInput(profile.monthlyBudget)
-                        : 0,
-                });
-            }
-            updateUser(res.data);
-            setMsg({ ...msg, profile: "✅ Profil berhasil disimpan" });
-        } catch (ex) {
-            setErr({
-                ...err,
-                profile: ex.response?.data?.message || "Gagal menyimpan",
+            const res = await updateProfileAPI({
+                name: profile.name.trim(),
+                dateOfBirth: profile.dateOfBirth || null,
+                theme: profile.theme,
+                notifications,
+                monthlyIncome: profile.monthlyIncome ? parseNumberInput(profile.monthlyIncome) : 0,
+                monthlyBudget: profile.monthlyBudget ? parseNumberInput(profile.monthlyBudget) : 0,
+                payday: profile.payday ? Number(profile.payday) : null,
             });
+            updateUser(res.data);
+            setSaved({ profile, notifications });
+            setSaveMsg({ type: "success", text: "Perubahan tersimpan" });
+            setTimeout(() => setSaveMsg((m) => (m.type === "success" ? { type: "", text: "" } : m)), 2500);
+        } catch (ex) {
+            setSaveMsg({ type: "error", text: ex.message || "Gagal menyimpan perubahan" });
+        } finally {
+            setSaving(false);
         }
     };
 
-    const handleFileChange = (e) => {
-        const f = e.target.files?.[0];
-        if (!f) return setSelectedFile(null);
-        setSelectedFile(f);
-        setFilePreview(URL.createObjectURL(f));
+    const handleDiscard = () => {
+        setProfile(saved.profile);
+        setNotifications(saved.notifications);
+        setSaveMsg({ type: "", text: "" });
     };
+
+    const hasPassword = user?.hasPassword !== false;
 
     const handleChangePassword = async (e) => {
         e.preventDefault();
-        window.scrollTo(0, 0);
-        setErr({ ...err, password: "" });
-        setMsg({ ...msg, password: "" });
-        if (password.newPassword !== password.confirm)
-            return setErr({
-                ...err,
-                password: "Password baru dan konfirmasi tidak cocok",
-            });
+        setPwMsg({ type: "", text: "" });
+        if (hasPassword && !password.currentPassword)
+            return setPwMsg({ type: "error", text: "Isi password lama kamu" });
         if (password.newPassword.length < 6)
-            return setErr({ ...err, password: "Password minimal 6 karakter" });
+            return setPwMsg({ type: "error", text: "Password baru minimal 6 karakter" });
+        if (password.newPassword !== password.confirm)
+            return setPwMsg({ type: "error", text: "Konfirmasi belum sama dengan password baru" });
+
+        const okPw = await confirmDialog({
+            title: hasPassword ? "Ganti password sekarang?" : "Buat password sekarang?",
+            message: "Gunakan password baru ini saat masuk berikutnya.",
+            confirmLabel: hasPassword ? "Ganti password" : "Buat password",
+            danger: false,
+        });
+        if (!okPw) return;
+        setPwSaving(true);
         try {
             await changePasswordAPI({
                 currentPassword: password.currentPassword,
                 newPassword: password.newPassword,
             });
             setPassword({ currentPassword: "", newPassword: "", confirm: "" });
-            setMsg({ ...msg, password: "✅ Password berhasil diganti" });
+            updateUser?.({ hasPassword: true });
+            setPwMsg({ type: "success", text: hasPassword ? "Password berhasil diganti" : "Password berhasil dibuat" });
         } catch (ex) {
-            setErr({
-                ...err,
-                password: ex.response?.data?.message || "Gagal ganti password",
-            });
+            setPwMsg({ type: "error", text: ex.message || "Gagal mengganti password" });
+        } finally {
+            setPwSaving(false);
         }
     };
 
     return (
-        <div style={{ padding: "32px", maxWidth: "700px", margin: "0 auto" }}>
-            <PageHeader
-                title="Pengaturan"
-                subtitle="Kelola profil dan preferensi akun"
-            />
+        <div className="set-page">
+            <PageHeader title="Pengaturan" subtitle="Kelola profil, preferensi, dan keamanan akunmu" />
 
-            {/* Profil */}
-            <Card style={{ marginBottom: "24px" }}>
-                <h2
-                    style={{
-                        fontSize: "16px",
-                        fontWeight: "700",
-                        margin: "0 0 20px",
-                        color: "var(--app-text-strong)",
-                    }}
-                >
-                    Informasi Profil
-                </h2>
+            <div className="set-layout">
+                <nav className="set-nav" aria-label="Bagian pengaturan">
+                    {SECTIONS.map(({ id, label, icon: Icon }) => (
+                        <button
+                            key={id}
+                            type="button"
+                            className={`set-nav-item ${activeSection === id ? "is-active" : ""}`}
+                            onClick={() => goTo(id)}
+                        >
+                            <Icon aria-hidden />
+                            {label}
+                        </button>
+                    ))}
+                </nav>
 
-                {err.profile && <AlertBox type="error" msg={err.profile} />}
-                {msg.profile && <AlertBox type="success" msg={msg.profile} />}
+                <div className="set-content">
+                    {/* ── Profil ─────────────────────────────── */}
+                    <section className="set-section" id="profil">
+                        <header className="set-section-head">
+                            <h2>Profil</h2>
+                            <p>Informasi dasar yang tampil di akunmu.</p>
+                        </header>
 
-                <form onSubmit={handleSaveProfile}>
-                    <div
-                        style={{
-                            display: "grid",
-                            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                            gap: "14px",
-                            marginBottom: "14px",
-                        }}
-                    >
-                        <Field label="Nama Lengkap">
-                            <input
-                                value={profile.name}
-                                onChange={(e) =>
-                                    setProfile({
-                                        ...profile,
-                                        name: e.target.value,
-                                    })
-                                }
-                                style={inp}
-                                required
-                            />
-                        </Field>
-                        <Field label="Username">
-                            <input
-                                value={profile.username}
-                                onChange={(e) =>
-                                    setProfile({
-                                        ...profile,
-                                        username: e.target.value,
-                                    })
-                                }
-                                placeholder="username"
-                                required
-                                disabled
-                                style={{
-                                    ...inp,
-                                    backgroundColor: "var(--app-surface-soft)",
-                                    color: "var(--app-muted)",
-                                    cursor: "not-allowed",
-                                }}
-                            />
-                        </Field>
-                        <Field label="Email">
-                            <input
-                                value={user?.email || ""}
-                                readOnly
-                                disabled
-                                style={{
-                                    ...inp,
-                                    backgroundColor: "var(--app-surface-soft)",
-                                    color: "var(--app-muted)",
-                                    cursor: "not-allowed",
-                                }}
-                            />
-                        </Field>
-                        {/* <Field label="Pilih File Gambar (opsional)">
-                            <input
-                                type="file"
-                                accept="image/*"
-                                onChange={handleFileChange}
-                                style={inp}
-                            />
-                        </Field> */}
-                        <Field label="Tanggal Lahir">
-                            <input
-                                type="date"
-                                value={profile.dateOfBirth}
-                                onChange={(e) =>
-                                    setProfile({
-                                        ...profile,
-                                        dateOfBirth: e.target.value,
-                                    })
-                                }
-                                style={inp}
-                            />
-                        </Field>
-                        {/* Removed phone, currency, language, timezone per request */}
-                        <Field label="Pendapatan Bulanan (Rp)">
-                            <input
-                                type="text"
-                                value={profile.monthlyIncome}
-                                onChange={(e) =>
-                                    setProfile({
-                                        ...profile,
-                                        monthlyIncome: formatNumberInput(
-                                            e.target.value,
-                                        ),
-                                    })
-                                }
-                                style={inp}
-                                placeholder="5.000.000"
-                                inputMode="numeric"
-                            />
-                        </Field>
-                        <Field label="Budget Bulanan (Rp)">
-                            <input
-                                type="text"
-                                value={profile.monthlyBudget}
-                                onChange={(e) =>
-                                    setProfile({
-                                        ...profile,
-                                        monthlyBudget: formatNumberInput(
-                                            e.target.value,
-                                        ),
-                                    })
-                                }
-                                style={inp}
-                                placeholder="3.000.000"
-                                inputMode="numeric"
-                            />
-                        </Field>
-                        <Field label="Tema">
-                            <select
-                                value={profile.theme}
-                                onChange={(e) =>
-                                    setProfile({
-                                        ...profile,
-                                        theme: e.target.value,
-                                    })
-                                }
-                                style={inp}
-                            >
-                                <option value="light">☀️ Light</option>
-                                <option value="dark">🌙 Dark</option>
-                                <option value="system">💻 System</option>
-                            </select>
-                        </Field>
-                    </div>
-                    <div
-                        style={{
-                            padding: "16px",
-                            border: "1px solid var(--app-border)",
-                            borderRadius: "14px",
-                            marginBottom: "18px",
-                            backgroundColor: "var(--app-surface-soft)",
-                        }}
-                    >
-                        <h3
-                            style={{
-                                fontSize: "14px",
-                                fontWeight: "700",
-                                margin: "0 0 12px",
-                                color: "var(--app-text-strong)",
-                            }}
+                        <Row
+                            label="Foto profil"
+                            hint="Maskot dipilih otomatis dari kebiasaan menabungmu 30 hari terakhir, jadi tidak bisa diganti manual."
                         >
-                            Notifikasi
-                        </h3>
-                        <div
-                            style={{
-                                display: "grid",
-                                gridTemplateColumns:
-                                    "repeat(2, minmax(0, 1fr))",
-                                gap: "10px",
-                            }}
-                        >
-                            {[
-                                ["dailyReminder", "Reminder harian"],
-                                ["budgetAlert", "Alert budget"],
-                                ["goalAlert", "Alert goal"],
-                            ].map(([key, label]) => (
-                                <label
-                                    key={key}
-                                    style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: "8px",
-                                        fontSize: "13px",
-                                        color: "var(--app-text)",
-                                    }}
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={notifications[key]}
-                                        onChange={(e) =>
-                                            setNotifications({
-                                                ...notifications,
-                                                [key]: e.target.checked,
-                                            })
-                                        }
-                                    />
-                                    {label}
-                                </label>
-                            ))}
-                            <Field label="Waktu Reminder">
-                                <input
-                                    type="time"
-                                    value={notifications.reminderTime}
-                                    onChange={(e) =>
-                                        setNotifications({
-                                            ...notifications,
-                                            reminderTime: e.target.value,
-                                        })
-                                    }
-                                    style={inp}
-                                />
-                            </Field>
-                        </div>
-                    </div>
-                    {/* <div style={{ marginBottom: "18px" }}>
-                        <div
-                            style={{
-                                fontSize: "13px",
-                                fontWeight: "600",
-                                color: "var(--app-muted)",
-                                marginBottom: "6px",
-                            }}
-                        >
-                            Preview Avatar
-                        </div>
-                        <div
-                            style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "12px",
-                            }}
-                        >
-                            <div
-                                style={{
-                                    width: "56px",
-                                    height: "56px",
-                                    borderRadius: "16px",
-                                    overflow: "hidden",
-                                    background:
-                                        "linear-gradient(135deg, var(--app-button-primary-from), var(--app-button-primary-to))",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    color: "white",
-                                    fontWeight: "800",
-                                    fontSize: "18px",
-                                }}
-                            >
-                                {filePreview || profile.avatar ? (
-                                    <img
-                                        src={filePreview || profile.avatar}
-                                        alt="Avatar preview"
-                                        style={{
-                                            width: "100%",
-                                            height: "100%",
-                                            objectFit: "cover",
-                                        }}
-                                    />
+                            <div className="persona-row">
+                                {persona ? (
+                                    <>
+                                        <img src={persona.image} alt={persona.name} className="persona-row-img" />
+                                        <div className="persona-row-text">
+                                            <div className="persona-row-name">
+                                                {persona.name}, {persona.title}
+                                                <span className="persona-row-level">Level {gamification.level}</span>
+                                            </div>
+                                            <p>{persona.meaning}</p>
+                                            <Link to="/pencapaian" className="persona-row-link">
+                                                {gamification.nextPersona
+                                                    ? `Lihat cara naik ke ${personaById(gamification.nextPersona).name}`
+                                                    : "Lihat pencapaianmu"}
+                                            </Link>
+                                        </div>
+                                    </>
                                 ) : (
-                                    (profile.name || "U")
-                                        .split(" ")
-                                        .filter(Boolean)
-                                        .slice(0, 2)
-                                        .map((part) => part[0]?.toUpperCase())
-                                        .join("") || "U"
+                                    <div className="persona-row-text">
+                                        <p>Memuat maskotmu...</p>
+                                    </div>
                                 )}
                             </div>
-                            <div
-                                style={{
-                                    color: "var(--app-muted)",
-                                    fontSize: "13px",
-                                }}
-                            >
-                                Gunakan URL gambar agar avatar tampil di
-                                sidebar.
+                        </Row>
+                        <Row label="Nama lengkap" htmlFor="set-name">
+                            <input
+                                id="set-name"
+                                type="text"
+                                value={profile.name}
+                                onChange={(e) => setP("name")(e.target.value)}
+                                autoComplete="name"
+                            />
+                        </Row>
+                        <Row label="Username" hint="Dipakai untuk masuk. Tidak bisa diubah.">
+                            <div className="set-readonly">@{user?.username}</div>
+                        </Row>
+                        <Row label="Email" hint="Tujuan reset password dan notifikasi.">
+                            <div className="set-readonly">
+                                {user?.email}
+                                {user?.isVerified && <span className="set-badge">Terverifikasi</span>}
                             </div>
-                        </div>
-                    </div> */}
-                    <button type="submit" style={btnPrimary}>
-                        Simpan Perubahan
-                    </button>
-                </form>
-            </Card>
+                        </Row>
+                        <Row label="Tanggal lahir">
+                            <DatePicker
+                                value={profile.dateOfBirth}
+                                onChange={setP("dateOfBirth")}
+                                placeholder="Pilih tanggal lahir"
+                                max={new Date().toISOString().slice(0, 10)}
+                            />
+                        </Row>
+                    </section>
 
-            {/* Ganti password */}
-            <Card>
-                <h2
-                    style={{
-                        fontSize: "16px",
-                        fontWeight: "700",
-                        margin: "0 0 20px",
-                        color: "var(--app-text-strong)",
-                    }}
-                >
-                    Ganti Password
-                </h2>
-
-                {err.password && <AlertBox type="error" msg={err.password} />}
-                {msg.password && <AlertBox type="success" msg={msg.password} />}
-
-                <form onSubmit={handleChangePassword}>
-                    {[
-                        { field: "currentPassword", label: "Password Lama" },
-                        { field: "newPassword", label: "Password Baru" },
-                        { field: "confirm", label: "Konfirmasi Password Baru" },
-                    ].map(({ field, label }) => (
-                        <Field
-                            key={field}
-                            label={label}
-                            style={{ marginBottom: "14px" }}
-                        >
-                            <div style={{ position: "relative" }}>
+                    {/* ── Keuangan ───────────────────────────── */}
+                    <section className="set-section" id="keuangan">
+                        <header className="set-section-head">
+                            <h2>Keuangan</h2>
+                            <p>Dipakai untuk menghitung sisa budget dan ringkasan bulanan.</p>
+                        </header>
+                        <Row label="Pendapatan bulanan" hint="Perkiraan total pemasukan per bulan." htmlFor="set-income">
+                            <div className="money-input">
                                 <input
-                                    type={
-                                        showPasswords[field]
-                                            ? "text"
-                                            : "password"
-                                    }
-                                    value={password[field]}
-                                    onChange={(e) =>
-                                        setPassword({
-                                            ...password,
-                                            [field]: e.target.value,
-                                        })
-                                    }
-                                    style={{
-                                        ...inp,
-                                        paddingRight: "56px",
-                                    }}
-                                    required
-                                    placeholder="••••••••"
+                                    id="set-income"
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={profile.monthlyIncome}
+                                    onChange={(e) => setP("monthlyIncome")(formatNumberInput(e.target.value))}
+                                    placeholder="5.000.000"
                                 />
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        setShowPasswords({
-                                            ...showPasswords,
-                                            [field]: !showPasswords[field],
-                                        })
-                                    }
-                                    style={{
-                                        position: "absolute",
-                                        top: "50%",
-                                        right: "10px",
-                                        transform: "translateY(-50%)",
-                                        border: "none",
-                                        background: "transparent",
-                                        color: showPasswords[field]
-                                            ? "var(--app-button-primary-from)"
-                                            : "var(--app-muted)",
-                                        cursor: "pointer",
-                                        padding: "0px",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "center",
-                                        boxShadow: "none",
-                                        outline: "none",
-                                    }}
-                                    aria-label={
-                                        showPasswords[field]
-                                            ? "Sembunyikan password"
-                                            : "Lihat password"
-                                    }
-                                >
-                                    <svg
-                                        width="18"
-                                        height="18"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        strokeWidth="2"
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        aria-hidden="true"
-                                        style={{ flexShrink: 0 }}
+                            </div>
+                        </Row>
+                        <Row label="Budget bulanan" hint="Batas pengeluaran yang ingin kamu jaga." htmlFor="set-budget">
+                            <div className="money-input">
+                                <input
+                                    id="set-budget"
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={profile.monthlyBudget}
+                                    onChange={(e) => setP("monthlyBudget")(formatNumberInput(e.target.value))}
+                                    placeholder="3.000.000"
+                                />
+                            </div>
+                        </Row>
+                        <Row
+                            label="Tanggal gajian"
+                            hint="Dipakai untuk menghitung jatah aman per hari sampai gajian berikutnya."
+                        >
+                            <DropdownMenu
+                                value={profile.payday}
+                                options={[
+                                    { value: "", label: "Belum diatur" },
+                                    ...Array.from({ length: 31 }, (_, i) => ({
+                                        value: String(i + 1),
+                                        label: i === 30 ? "Tanggal 31 (akhir bulan)" : `Tanggal ${i + 1}`,
+                                    })),
+                                ]}
+                                onChange={setP("payday")}
+                                minWidth="220px"
+                            />
+                        </Row>
+                    </section>
+
+                    {/* ── Tampilan ───────────────────────────── */}
+                    <section className="set-section" id="tampilan">
+                        <header className="set-section-head">
+                            <h2>Tampilan</h2>
+                            <p>Atur tema warna aplikasi.</p>
+                        </header>
+                        <Row label="Tema">
+                            <div className="segmented" role="radiogroup" aria-label="Tema">
+                                {THEMES.map(({ value, label, icon: Icon }) => (
+                                    <button
+                                        key={value}
+                                        type="button"
+                                        role="radio"
+                                        aria-checked={profile.theme === value}
+                                        className={`segmented-item ${profile.theme === value ? "is-active" : ""}`}
+                                        onClick={() => setP("theme")(value)}
                                     >
-                                        <path
-                                            style={{
-                                                display: showPasswords[field]
-                                                    ? "none"
-                                                    : "block",
-                                            }}
-                                            d="M9.88 9.88a3 3 0 1 0 4.24 4.24"
-                                        />
-                                        <path
-                                            style={{
-                                                display: showPasswords[field]
-                                                    ? "none"
-                                                    : "block",
-                                            }}
-                                            d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"
-                                        />
-                                        <path
-                                            style={{
-                                                display: showPasswords[field]
-                                                    ? "none"
-                                                    : "block",
-                                            }}
-                                            d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"
-                                        />
-                                        <line
-                                            style={{
-                                                display: showPasswords[field]
-                                                    ? "none"
-                                                    : "block",
-                                            }}
-                                            x1="2"
-                                            x2="22"
-                                            y1="2"
-                                            y2="22"
-                                        />
-                                        <path
-                                            style={{
-                                                display: showPasswords[field]
-                                                    ? "block"
-                                                    : "none",
-                                            }}
-                                            d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"
-                                        />
-                                        <circle
-                                            style={{
-                                                display: showPasswords[field]
-                                                    ? "block"
-                                                    : "none",
-                                            }}
-                                            cx="12"
-                                            cy="12"
-                                            r="3"
-                                        />
-                                    </svg>
+                                        <Icon aria-hidden />
+                                        {label}
+                                    </button>
+                                ))}
+                            </div>
+                        </Row>
+                        <Row label="Panduan pengguna" hint="Lihat lagi sambutan, tur singkat, dan checklist langkah awal.">
+                            <button
+                                type="button"
+                                className="btn-ghost"
+                                onClick={() => window.dispatchEvent(new CustomEvent("dt:onboarding"))}
+                            >
+                                Tampilkan panduan lagi
+                            </button>
+                        </Row>
+                    </section>
+
+                    {/* ── Notifikasi ─────────────────────────── */}
+                    <section className="set-section" id="notifikasi">
+                        <header className="set-section-head">
+                            <h2>Notifikasi</h2>
+                            <p>Pengingat dikirim ke email kamu (waktu WIB) dan selalu tampil di lonceng notifikasi.</p>
+                        </header>
+                        <div className="set-switches">
+                            {NOTIFS.map(([key, label, desc]) => (
+                                <Switch
+                                    key={key}
+                                    id={`notif-${key}`}
+                                    label={label}
+                                    description={desc}
+                                    checked={notifications[key]}
+                                    onChange={(v) => setNotifications((n) => ({ ...n, [key]: v }))}
+                                />
+                            ))}
+                        </div>
+                        <Row label="Jam pengingat harian" hint="Waktu WIB. Pengingat hanya dikirim kalau belum ada catatan hari itu.">
+                            <div style={{ maxWidth: 220 }}>
+                                <TimePicker
+                                    value={notifications.reminderTime}
+                                    onChange={(v) => setNotifications((n) => ({ ...n, reminderTime: v }))}
+                                />
+                            </div>
+                        </Row>
+                        <NotificationExtras reminderTime={notifications.reminderTime} />
+                    </section>
+
+                    {/* ── Keamanan ───────────────────────────── */}
+                    <section className="set-section" id="keamanan">
+                        <header className="set-section-head">
+                            <h2>{hasPassword ? "Ganti password" : "Buat password"}</h2>
+                            <p>
+                                {hasPassword
+                                    ? "Gunakan minimal 6 karakter. Kamu tetap masuk di perangkat ini setelah mengganti."
+                                    : "Akunmu terhubung dengan Google. Buat password supaya bisa juga masuk pakai username."}
+                            </p>
+                        </header>
+
+                        <form onSubmit={handleChangePassword}>
+                            {pwMsg.text && <Notice {...pwMsg} />}
+                            {hasPassword && (
+                                <Row label="Password lama" htmlFor="pw-current">
+                                    <PasswordInput
+                                        id="pw-current"
+                                        value={password.currentPassword}
+                                        onChange={(e) => setPassword({ ...password, currentPassword: e.target.value })}
+                                        autoComplete="current-password"
+                                        disabled={pwSaving}
+                                    />
+                                </Row>
+                            )}
+                            <Row label="Password baru" htmlFor="pw-new">
+                                <PasswordInput
+                                    id="pw-new"
+                                    value={password.newPassword}
+                                    onChange={(e) => setPassword({ ...password, newPassword: e.target.value })}
+                                    autoComplete="new-password"
+                                    placeholder="Min. 6 karakter"
+                                    disabled={pwSaving}
+                                />
+                            </Row>
+                            <Row label="Ulangi password baru" htmlFor="pw-confirm">
+                                <PasswordInput
+                                    id="pw-confirm"
+                                    value={password.confirm}
+                                    onChange={(e) => setPassword({ ...password, confirm: e.target.value })}
+                                    autoComplete="new-password"
+                                    disabled={pwSaving}
+                                />
+                            </Row>
+                            <div className="set-section-foot">
+                                <button type="submit" className="btn-primary" disabled={pwSaving} aria-busy={pwSaving}>
+                                    {pwSaving && <span className="btn-spinner" aria-hidden />}
+                                    {pwSaving ? "Menyimpan..." : hasPassword ? "Ganti password" : "Buat password"}
                                 </button>
                             </div>
-                        </Field>
-                    ))}
-                    <button
-                        type="submit"
-                        style={{
-                            ...btnPrimary,
-                            backgroundColor: "#ef4444",
-                            backgroundImage: "none",
-                        }}
-                    >
-                        Ganti Password
-                    </button>
-                </form>
-            </Card>
+                        </form>
+                    </section>
+                </div>
+            </div>
+
+            {/* Bilah simpan — muncul saat ada perubahan */}
+            <div className={`save-bar ${dirty || saveMsg.text ? "is-visible" : ""}`} role="region" aria-label="Simpan perubahan">
+                <div className={`save-bar-msg ${saveMsg.type ? `is-${saveMsg.type}` : ""}`}>
+                    {saveMsg.type === "success" && <FiCheckCircle aria-hidden />}
+                    {saveMsg.type === "error" && <FiAlertCircle aria-hidden />}
+                    {saveMsg.text || "Ada perubahan yang belum disimpan"}
+                </div>
+                {dirty && (
+                    <div className="save-bar-actions">
+                        <button type="button" className="btn-ghost" onClick={handleDiscard} disabled={saving}>
+                            Batalkan
+                        </button>
+                        <button type="button" className="btn-primary" onClick={handleSave} disabled={saving} aria-busy={saving}>
+                            {saving && <span className="btn-spinner" aria-hidden />}
+                            {saving ? "Menyimpan..." : "Simpan perubahan"}
+                        </button>
+                    </div>
+                )}
+            </div>
         </div>
     );
 }
 
-// Helper components
-function Field({ label, children, style = {} }) {
+function Row({ label, hint, htmlFor, children }) {
     return (
-        <div style={style}>
-            <label
-                style={{
-                    display: "block",
-                    fontSize: "13px",
-                    fontWeight: "600",
-                    color: "var(--app-muted)",
-                    marginBottom: "6px",
-                }}
-            >
-                {label}
-            </label>
-            {children}
+        <div className="set-row">
+            <div className="set-row-label">
+                <label htmlFor={htmlFor}>{label}</label>
+                {hint && <p>{hint}</p>}
+            </div>
+            <div className="set-row-control">{children}</div>
         </div>
     );
 }
 
-function AlertBox({ type, msg }) {
-    const isErr = type === "error";
+function Notice({ type, text }) {
     return (
-        <div
-            style={{
-                padding: "10px 14px",
-                borderRadius: "8px",
-                fontSize: "13px",
-                marginBottom: "14px",
-                backgroundColor: isErr
-                    ? "rgba(239, 68, 68, 0.1)"
-                    : "rgba(16, 185, 129, 0.1)",
-                color: isErr ? "#ef4444" : "#10b981",
-                border: `1px solid ${isErr ? "rgba(239, 68, 68, 0.3)" : "rgba(16, 185, 129, 0.3)"}`,
-            }}
-        >
-            {msg}
+        <div className={`set-notice is-${type}`} role={type === "error" ? "alert" : "status"}>
+            {type === "success" ? <FiCheckCircle aria-hidden /> : <FiAlertCircle aria-hidden />}
+            {text}
         </div>
     );
 }
-
-const inp = {
-    width: "100%",
-    padding: "10px 12px",
-    border: "1.5px solid var(--app-border)",
-    borderRadius: "10px",
-    fontSize: "14px",
-    boxSizing: "border-box",
-    backgroundColor: "var(--app-surface)",
-    color: "var(--app-text-strong)",
-};
-const btnPrimary = {
-    padding: "11px 24px",
-    background:
-        "linear-gradient(135deg,var(--app-button-primary-from),var(--app-button-primary-to))",
-    color: "var(--app-button-primary-text)",
-    border: "none",
-    borderRadius: "10px",
-    cursor: "pointer",
-    fontWeight: "700",
-    fontSize: "14px",
-};

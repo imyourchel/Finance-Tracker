@@ -51,7 +51,7 @@ export const MONTHS = [
 export const TYPE_COLOR = {
     income: "#10b981",
     expense: "#ef4444",
-    transfer: "#4f46e5",
+    transfer: "#1e6e55",
 };
 
 export const TYPE_LABEL = {

@@ -1,6 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { FiCheck, FiChevronDown } from "react-icons/fi";
+import { useDismiss, usePopoverPosition } from "./usePopover";
 
+/**
+ * Dropdown pilihan bertema DailyTrack.
+ * API sama seperti sebelumnya: label, value, options [{value,label}], onChange, minWidth, width.
+ */
 export default function DropdownMenu({
     label,
     value,
@@ -8,153 +14,110 @@ export default function DropdownMenu({
     onChange,
     minWidth = "150px",
     width,
+    placeholder = "Pilih...",
 }) {
     const [open, setOpen] = useState(false);
-    const rootRef = useRef(null);
+    const [active, setActive] = useState(-1);
+    const triggerRef = useRef(null);
+    const menuRef = useRef(null);
 
-    const selectedLabel = useMemo(() => {
-        const found = options.find(
-            (opt) => String(opt.value) === String(value),
-        );
-        return found?.label || "-";
-    }, [options, value]);
+    const selectedIndex = useMemo(
+        () => options.findIndex((o) => String(o.value) === String(value)),
+        [options, value],
+    );
+    const selectedLabel = options[selectedIndex]?.label;
 
-    const [menuPos, setMenuPos] = useState(null);
+    const close = useCallback(() => setOpen(false), []);
+    useDismiss(open, [triggerRef, menuRef], close);
+    const pos = usePopoverPosition(open, triggerRef, menuRef, {
+        width: 180,
+        matchWidth: true,
+    });
 
-    useEffect(() => {
-        const handleOutsideClick = (event) => {
-            if (!rootRef.current?.contains(event.target)) {
-                setOpen(false);
-            }
-        };
+    const openMenu = () => {
+        setActive(selectedIndex >= 0 ? selectedIndex : 0);
+        setOpen(true);
+    };
 
-        const handleEscape = (event) => {
-            if (event.key === "Escape") setOpen(false);
-        };
+    const choose = (opt) => {
+        onChange(opt.value);
+        setOpen(false);
+        triggerRef.current?.focus();
+    };
 
-        document.addEventListener("click", handleOutsideClick);
-        document.addEventListener("keydown", handleEscape);
-        return () => {
-            document.removeEventListener("click", handleOutsideClick);
-            document.removeEventListener("keydown", handleEscape);
-        };
-    }, []);
-
-    useEffect(() => {
+    const onKeyDown = (e) => {
+        if (!open && ["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) {
+            e.preventDefault();
+            openMenu();
+            return;
+        }
         if (!open) return;
-        const btn = rootRef.current?.querySelector("button");
-        if (!btn) return;
-        const rect = btn.getBoundingClientRect();
-        setMenuPos({
-            top: rect.bottom + 8,
-            right: window.innerWidth - rect.right,
-            width: rect.width,
-        });
-
-        const update = () => {
-            const r = btn.getBoundingClientRect();
-            setMenuPos({
-                top: r.bottom + 8,
-                right: window.innerWidth - r.right,
-                width: r.width,
-            });
-        };
-        window.addEventListener("resize", update);
-        window.addEventListener("scroll", update, true);
-        return () => {
-            window.removeEventListener("resize", update);
-            window.removeEventListener("scroll", update, true);
-        };
-    }, [open]);
+        if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setActive((i) => Math.min(options.length - 1, i + 1));
+        } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setActive((i) => Math.max(0, i - 1));
+        } else if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            if (options[active]) choose(options[active]);
+        } else if (e.key === "Tab") {
+            setOpen(false);
+        }
+    };
 
     return (
-        <div
-            ref={rootRef}
-            style={{ position: "relative", width: width || "auto" }}
-        >
+        <div className="dd" style={{ width: width || "auto" }}>
             <button
+                ref={triggerRef}
                 type="button"
-                onClick={() => setOpen((prev) => !prev)}
-                aria-haspopup="menu"
+                className={`dd-trigger ${open ? "is-open" : ""}`}
+                onClick={() => (open ? setOpen(false) : openMenu())}
+                onKeyDown={onKeyDown}
+                aria-haspopup="listbox"
                 aria-expanded={open}
                 style={{
                     width: width || "100%",
                     minWidth: width ? width : minWidth,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: "10px",
-                    padding: "9px 12px",
-                    borderRadius: "10px",
-                    border: "1.5px solid var(--app-border)",
-                    backgroundColor: "var(--app-surface)",
-                    color: "var(--app-text-strong)",
-                    fontSize: "13px",
-                    fontWeight: "600",
-                    cursor: "pointer",
                 }}
             >
-                <span>
-                    {label ? `${label}: ${selectedLabel}` : selectedLabel}
+                <span className="dd-value">
+                    {label && <span className="dd-label">{label}</span>}
+                    <span className={selectedLabel ? "" : "dd-placeholder"}>
+                        {selectedLabel || placeholder}
+                    </span>
                 </span>
-                <span style={{ color: "var(--app-muted)", fontSize: "12px" }}>
-                    ▾
-                </span>
+                <FiChevronDown className="dd-chevron" aria-hidden />
             </button>
 
             {open &&
-                menuPos &&
                 createPortal(
                     <div
-                        role="menu"
-                        style={{
-                            position: "fixed",
-                            top: menuPos.top,
-                            right: menuPos.right,
-                            width: width || menuPos.width,
-                            boxSizing: "border-box",
-                            maxHeight: "260px",
-                            overflowY: "auto",
-                            borderRadius: "12px",
-                            border: "1px solid var(--app-border)",
-                            backgroundColor: "var(--app-surface)",
-                            boxShadow: "var(--app-card-shadow)",
-                            padding: "6px",
-                            zIndex: 9999,
-                        }}
+                        ref={menuRef}
+                        role="listbox"
+                        className={`dd-menu pop-${pos.placement}`}
+                        style={{ top: pos.top, left: pos.left, width: pos.width }}
                     >
-                        {options.map((opt) => {
-                            const active = String(opt.value) === String(value);
+                        {options.map((opt, i) => {
+                            const selected = i === selectedIndex;
                             return (
                                 <button
                                     key={String(opt.value)}
                                     type="button"
-                                    role="menuitem"
-                                    onClick={() => {
-                                        onChange(opt.value);
-                                        setOpen(false);
-                                    }}
-                                    style={{
-                                        width: "100%",
-                                        textAlign: "left",
-                                        padding: "8px 10px",
-                                        borderRadius: "8px",
-                                        border: "none",
-                                        backgroundColor: active
-                                            ? "var(--accent-bg)"
-                                            : "transparent",
-                                        color: active
-                                            ? "var(--accent)"
-                                            : "var(--app-text-strong)",
-                                        fontSize: "13px",
-                                        fontWeight: active ? "700" : "500",
-                                        cursor: "pointer",
-                                    }}
+                                    role="option"
+                                    aria-selected={selected}
+                                    className={`dd-option ${selected ? "is-selected" : ""} ${i === active ? "is-active" : ""}`}
+                                    onMouseEnter={() => setActive(i)}
+                                    onClick={() => choose(opt)}
                                 >
-                                    {opt.label}
+                                    <span>{opt.label}</span>
+                                    {selected && <FiCheck aria-hidden />}
                                 </button>
                             );
                         })}
+                        {options.length === 0 && (
+                            <div className="dd-empty">Belum ada pilihan</div>
+                        )}
                     </div>,
                     document.body,
                 )}
